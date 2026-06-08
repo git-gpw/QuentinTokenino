@@ -1,0 +1,7 @@
+google-genai==2.8.0
+pydantic>=2.13.4
+pandas>=2.2.2
+scikit-learn>=1.5.0
+numpy>=1.26.4
+#pip install -r requirements.txt
+#pip install -r requirements.txt --upgrade
