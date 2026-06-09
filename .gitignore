@@ -29,6 +29,16 @@ logs/
 # Embeddings (legacy, no longer used in v0.2)
 *.npy
 
+# Large data files (downloaded, not committed)
+imdb_*.tsv.gz
+MovieSummaries/
+moviesum_light.csv
+movies_dataset_v1_backup.csv
+.cache/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
 # Secrets - NEVER commit API keys
 .env
 .env.local
