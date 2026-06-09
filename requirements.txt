@@ -6,7 +6,7 @@ numpy>=1.26.4
 scikit-learn>=1.5.0
 pydantic>=2.8.0
 
-# LLM calls (style rewrite + LLM-as-a-Judge):
-google-genai>=2.8.0
+# LLM calls (style rewrite + LLM-as-a-Judge — runs locally via Ollama):
+ollama>=0.6.0
 
 # Install: pip install -r requirements.txt

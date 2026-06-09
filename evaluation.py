@@ -47,7 +47,9 @@ from datetime import datetime
 
 import pandas as pd
 
-from pipeline import detect_plagiarism, run_pipeline, setup_logger
+import ollama
+
+from pipeline import detect_plagiarism, run_pipeline, setup_logger, OLLAMA_MODEL
 from schema import PLAGIARISM_THRESHOLD
 
 
@@ -316,6 +318,9 @@ def judge_style_adherence(
     Ask an independent LLM call to score how well the rewrite
     captures the target director's filmmaking style.
 
+    Runs locally via Ollama — same model, separate call, acting as
+    an independent judge rather than the author.
+
     Scoring:
         1 = No resemblance to the director's style
         2 = Slight resemblance
@@ -326,11 +331,6 @@ def judge_style_adherence(
     Returns:
         (score, justification_string)
     """
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-
     prompt = f"""You are a film studies professor grading student work.
 
 ORIGINAL PLOT:
@@ -351,16 +351,14 @@ Rubric:
   4 = Strong resemblance
   5 = Unmistakably in the director's style"""
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.0,
-        ),
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        format="json",
+        options={"temperature": 0.0},
     )
 
-    data = json.loads(response.text)
+    data = json.loads(response.message.content)
     return int(data.get("score", 0)), data.get("justification", "")
 
 

@@ -7,7 +7,7 @@ You give it a movie plot idea. It does 4 things:
 
     1. Checks if your idea is too similar to an existing movie  (local math, no AI)
     2. Finds which famous director made the closest matching film (database lookup)
-    3. Rewrites your plot in that director's filmmaking style     (Gemini AI)
+    3. Rewrites your plot in that director's filmmaking style     (Ollama/Gemma3)
     4. Packages everything into validated, structured JSON        (Pydantic)
 
 
@@ -35,10 +35,10 @@ PROCESS FLOW:
              |  director name
              v
     +------------------+
-    |  STEP 3:         |   Gemini 2.0 Flash rewrites the user's plot
+    |  STEP 3:         |   Gemma3 via Ollama rewrites the user's plot
     |  LLM Style       |   in the matched director's filmmaking style.
     |  Rewrite         |
-    |  (Gemini API)    |   THIS IS THE ONLY STEP THAT CALLS AN EXTERNAL API.
+    |  (Ollama (local))    |   THIS IS THE ONLY STEP USING AI. Runs locally.
     +--------+---------+
              |  raw JSON text from LLM
              v
@@ -67,10 +67,15 @@ import logging
 from datetime import datetime
 
 import pandas as pd
+import ollama
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
 from schema import MovieAnalysis, PLAGIARISM_THRESHOLD
+
+# Which Ollama model to use for the style rewrite.
+# Change this if you pull a different model (e.g. "llama3", "mistral").
+OLLAMA_MODEL = "gemma3"
 
 
 # -----------------------------------------------------------------------
@@ -186,24 +191,17 @@ def rewrite_in_director_style(
     detected_plagiarism: bool,
 ) -> str:
     """
-    Send the user's plot + detection results to Gemini for style rewriting.
+    Send the user's plot + detection results to a local LLM for style rewriting.
 
     The LLM receives hard facts from Step 1 (score, match, plagiarism flag)
     with strict instructions NOT to override them. Its only creative job is
     the rewrite and the stylistic notes.
 
+    Runs locally via Ollama — no API key, no network calls, no rate limits.
+
     Returns:
         Raw JSON string from the LLM (to be validated in Step 4).
-
-    Raises:
-        ImportError if google-genai is not installed.
-        Various google.genai errors if the API call fails.
     """
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-
     prompt = f"""You are an expert film critic and professor of cinematography.
 
 USER'S ORIGINAL PLOT:
@@ -215,26 +213,33 @@ PLAGIARISM DETECTION RESULTS (computed deterministically by TF-IDF — do NOT ch
 - Similarity score: {similarity_score}
 - Plagiarism detected: {detected_plagiarism}
 
-YOUR TASK:
-1. Set "detected_plagiarism" to exactly {detected_plagiarism}.
+YOUR TASK — respond with ONLY a JSON object, no other text:
+1. Set "detected_plagiarism" to exactly {str(detected_plagiarism).lower()}.
 2. Set "matched_movie" to exactly "{matched_movie}".
 3. Set "similarity_score" to exactly {similarity_score}.
 4. Set "assigned_director" to exactly "{assigned_director}".
 5. In "rewritten_plot", rewrite the user's plot in {assigned_director}'s filmmaking style.
    Adopt their narrative structure, pacing, tone, and thematic obsessions.
 6. In "stylistic_notes", explain in plain English what you changed and why it
-   reflects {assigned_director}'s style. A non-film-expert should understand this."""
+   reflects {assigned_director}'s style. A non-film-expert should understand this.
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=MovieAnalysis,
-            temperature=0.1,
-        ),
+Required JSON schema:
+{{
+  "detected_plagiarism": bool,
+  "matched_movie": string,
+  "similarity_score": float,
+  "assigned_director": string,
+  "rewritten_plot": string,
+  "stylistic_notes": string
+}}"""
+
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        format="json",
+        options={"temperature": 0.1},
     )
-    return response.text
+    return response.message.content
 
 
 # -----------------------------------------------------------------------
@@ -315,7 +320,7 @@ def run_pipeline(
     log.info(f"STEP 2: Routed to director -> {detection['assigned_director']}")
 
     # -- STEP 3: LLM rewrite --
-    log.info("STEP 3: Calling Gemini 2.0 Flash for style rewrite...")
+    log.info("STEP 3: Calling Gemma3 via Ollama for style rewrite...")
     raw_json = rewrite_in_director_style(
         user_plot=user_plot,
         matched_movie=detection["matched_movie"],
