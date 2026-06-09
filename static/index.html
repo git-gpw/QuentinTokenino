@@ -1091,9 +1091,18 @@
         document.getElementById('eval-table-card').style.display = 'block';
     }
 
-    // Allow Ctrl+Enter to submit
+    // Keyboard shortcuts on textarea
     document.getElementById('plot-input').addEventListener('keydown', e => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyzePlot();
+
+        // Right arrow or Tab on empty textarea → fill with placeholder text
+        if ((e.key === 'ArrowRight' || e.key === 'Tab') && e.target.value === '') {
+            e.preventDefault();
+            const placeholder = e.target.placeholder.replace(/^e\.g\.\s*/, '');
+            e.target.value = placeholder;
+            // Move cursor to end
+            e.target.setSelectionRange(placeholder.length, placeholder.length);
+        }
     });
 </script>
 
