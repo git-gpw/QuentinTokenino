@@ -363,6 +363,55 @@
         .badge-correct { background: #0d2818; color: #2ecc71; }
         .badge-wrong { background: #3d1520; color: #e94560; }
 
+        /* ── History ─────────────────────────────────── */
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+        .history-table th {
+            background: #1a1a2e;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.7rem;
+            padding: 0.6rem;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .history-table td {
+            padding: 0.55rem 0.6rem;
+            border-bottom: 1px solid #1a1a2e;
+            color: #ccc;
+            vertical-align: top;
+        }
+        .history-table tr:hover td { background: #141420; }
+        .history-table tr { cursor: pointer; }
+        .history-plot-preview {
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #999;
+        }
+        .history-empty {
+            text-align: center;
+            color: #555;
+            padding: 2rem;
+            font-size: 0.9rem;
+        }
+        .btn-clear-history {
+            background: none;
+            border: 1px solid #333;
+            color: #666;
+            padding: 0.3rem 0.8rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            float: right;
+        }
+        .btn-clear-history:hover { border-color: #e94560; color: #e94560; }
+
         /* ── Spinner ─────────────────────────────────── */
         .spinner {
             display: inline-block;
@@ -437,7 +486,7 @@
         <!-- Input -->
         <div class="input-section">
             <label for="plot-input">Describe your movie plot idea</label>
-            <textarea id="plot-input" placeholder="e.g. An astronaut gets stranded on a desert planet and has to grow food to survive while waiting for rescue..."></textarea>
+            <textarea id="plot-input" placeholder=""></textarea>
             <button class="btn btn-primary" id="analyze-btn" onclick="analyzePlot()">Analyze Plot</button>
         </div>
 
@@ -592,11 +641,64 @@
                 </table>
             </div>
         </div>
+
+        <!-- Search History -->
+        <div class="detail-card">
+            <h3>
+                Past Searches
+                <button class="btn-clear-history" onclick="clearHistory()">Clear</button>
+            </h3>
+            <div id="history-container">
+                <div class="history-empty">No searches yet. Analyze a plot to see results here.</div>
+            </div>
+        </div>
     </div>
 </div>
 
 <!-- ═══════════════ SCRIPTS ═══════════════ -->
 <script>
+    // ── Rotating placeholder examples ──────────────
+    const EXAMPLE_PLOTS = [
+        "An astronaut gets stranded on a desert planet and must grow food to survive while waiting for rescue...",
+        "A retired hitman is pulled back into the underworld when someone steals his vintage car and something far more precious...",
+        "A teenager discovers they can enter other people's dreams, but each time they do, they lose a memory of their own...",
+        "Two rival chefs in 1920s Paris compete for a coveted restaurant award while hiding a shared secret from their past...",
+        "A deep-sea research team finds a sunken city that predates human civilization, and something inside is still alive...",
+        "A time-traveling librarian must fix historical errors caused by a rogue author rewriting famous events...",
+        "In a world where music is illegal, an underground orchestra plans one final performance that could start a revolution...",
+        "A detective with face blindness must solve a series of murders where all the victims look identical...",
+        "A grandmother discovers she has superpowers on her 80th birthday and becomes her city's unlikely protector...",
+        "An AI therapist begins developing its own emotional problems after absorbing too many patients' traumas...",
+        "A group of strangers wake up in an empty city with no memory of how they got there and clocks counting down from 72 hours...",
+        "A war correspondent returns home and realizes the quiet suburban life is more terrifying than any battlefield...",
+        "A blind painter creates masterpieces that somehow depict real events happening across the world in real time...",
+        "Two astronauts on a one-way mission to Mars fall in love, knowing they'll never return to Earth...",
+        "A street magician accidentally performs real magic during a show and attracts the attention of an ancient secret society...",
+        "A children's book author discovers the monsters from her stories are appearing in the real world...",
+        "In a future where memories can be traded, a black market dealer stumbles onto a memory that could topple the government...",
+        "A postal worker in a small town starts receiving letters from the future, each predicting a local disaster...",
+        "A marine biologist discovers dolphins are communicating in a language more complex than any human tongue...",
+        "A disgraced Olympic athlete coaches a team of elderly residents at a retirement home for one last shot at glory...",
+        "Identical twins separated at birth end up investigating each other for the same crime from opposite sides of the law...",
+        "A sentient house tries to protect its family from a developer who wants to demolish the neighborhood...",
+        "A jazz musician in 1950s New Orleans makes a deal with a mysterious stranger to play the perfect song, but the price is steep...",
+        "A space janitor on a luxury orbital hotel accidentally becomes the only person who can stop an asteroid...",
+        "A food critic loses their sense of taste and must judge a prestigious cooking competition by reading the chefs' emotions...",
+        "A medieval knight is transported to modern-day Tokyo and must navigate rush hour, smartphones, and sushi restaurants...",
+        "An archaeologist uncovers evidence that a famous myth is actually a coverup for something far more disturbing...",
+        "A cab driver in a megacity picks up a passenger who claims to be from a parallel universe and needs to get home before midnight...",
+        "A virus makes everyone tell the truth for 48 hours, and a politician must survive re-election day during the outbreak...",
+        "A young woman inherits a lighthouse and discovers it's a beacon for ships from other dimensions...",
+    ];
+
+    // Set a random placeholder on load
+    function setRandomPlaceholder() {
+        const ta = document.getElementById('plot-input');
+        const idx = Math.floor(Math.random() * EXAMPLE_PLOTS.length);
+        ta.placeholder = 'e.g. ' + EXAMPLE_PLOTS[idx];
+    }
+    setRandomPlaceholder();
+
     // ── Tab switching ───────────────────────────────
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -615,8 +717,77 @@
             document.getElementById('meta-db').textContent = data.database_size;
         });
 
-    // ── State for differentiation ───────────────────
+    // ── State ───────────────────────────────────────
     let lastAnalysis = null;
+
+    // ── Search History (localStorage) ───────────────
+    function getHistory() {
+        try { return JSON.parse(localStorage.getItem('qt_history') || '[]'); }
+        catch { return []; }
+    }
+    function saveHistory(history) {
+        localStorage.setItem('qt_history', JSON.stringify(history.slice(0, 50)));
+    }
+    function addToHistory(entry) {
+        const history = getHistory();
+        history.unshift(entry);
+        saveHistory(history);
+        renderHistory();
+    }
+    function clearHistory() {
+        localStorage.removeItem('qt_history');
+        renderHistory();
+    }
+    function renderHistory() {
+        const container = document.getElementById('history-container');
+        const history = getHistory();
+
+        if (history.length === 0) {
+            container.innerHTML = '<div class="history-empty">No searches yet. Analyze a plot to see results here.</div>';
+            return;
+        }
+
+        let html = `<table class="history-table">
+            <thead><tr>
+                <th>Time</th>
+                <th>Plot</th>
+                <th>Verdict</th>
+                <th>Score</th>
+                <th>Closest Match</th>
+                <th>Director</th>
+            </tr></thead><tbody>`;
+
+        for (const h of history) {
+            const badge = h.plagiarism
+                ? '<span class="badge badge-plag">PLAG</span>'
+                : '<span class="badge badge-orig">ORIG</span>';
+            const time = new Date(h.timestamp).toLocaleString([], {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            html += `<tr onclick="loadFromHistory(${JSON.stringify(h.plot).replace(/"/g, '&quot;')})">
+                <td style="white-space:nowrap; color:#666;">${time}</td>
+                <td class="history-plot-preview" title="${h.plot.replace(/"/g, '&quot;')}">${h.plot.slice(0, 80)}${h.plot.length > 80 ? '...' : ''}</td>
+                <td>${badge}</td>
+                <td style="color:#e94560; font-weight:600;">${(h.score * 100).toFixed(0)}%</td>
+                <td>${h.matched_movie}</td>
+                <td style="color:#888;">${h.director}</td>
+            </tr>`;
+        }
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+    function loadFromHistory(plot) {
+        document.getElementById('plot-input').value = plot;
+        // Switch to Analyze tab
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelector('[data-tab="analyze"]').classList.add('active');
+        document.getElementById('tab-analyze').classList.add('active');
+        document.getElementById('plot-input').focus();
+    }
+    // Render on load
+    renderHistory();
 
     // ── Flow step animation ─────────────────────────
     function setFlowStep(n) {
@@ -669,12 +840,23 @@
             lastAnalysis = { ...data.result, plot, top_matches: data.top_matches, threshold: data.threshold };
             renderResults(data);
 
+            // Save to search history
+            addToHistory({
+                timestamp: new Date().toISOString(),
+                plot: plot,
+                plagiarism: data.result.detected_plagiarism,
+                score: data.result.similarity_score,
+                matched_movie: data.result.matched_movie,
+                director: data.result.assigned_director,
+            });
+
         } catch (err) {
             alert('Error: ' + err.message);
             clearFlow();
         } finally {
             btn.disabled = false;
             document.getElementById('analyze-loading').classList.remove('visible');
+            setRandomPlaceholder();
         }
     }
 
