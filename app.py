@@ -8,6 +8,7 @@ Serves a single-page UI with two tabs:
 Endpoints:
     GET  /                  - Serve the HTML UI
     POST /api/analyze       - Run the pipeline on a user plot
+    POST /api/similarity    - Explain what's most similar (spaCy NER + LLM)
     POST /api/differentiate - Get differentiation strategies for a flagged plot
     POST /api/evaluate      - Run the full evaluation suite
 
@@ -24,6 +25,7 @@ import pandas as pd
 from pipeline import (
     run_pipeline,
     detect_plagiarism,
+    explain_similarity,
     suggest_differentiation,
     setup_logger,
     OLLAMA_MODEL,
@@ -76,6 +78,45 @@ def analyze():
             "threshold": PLAGIARISM_THRESHOLD,
             "model": OLLAMA_MODEL,
         })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/similarity", methods=["POST"])
+def similarity():
+    """
+    Explain what's most similar between the user's plot and the closest match.
+
+    Uses two layers:
+        1. spaCy NER to find shared named entities (deterministic)
+        2. Ollama to identify deeper thematic/structural parallels
+
+    Expects JSON: {"plot": "...", "matched_movie": "...", "similarity_score": float}
+    Returns JSON: {"shared_entities": [...], "aspects": [...]}
+    """
+    data = request.get_json() or {}
+
+    required = ["plot", "matched_movie", "similarity_score"]
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+
+    try:
+        # Look up the matched movie's plot from the database
+        movie_row = DF[DF["title"] == data["matched_movie"]]
+        if movie_row.empty:
+            return jsonify({"error": f"Movie not found: {data['matched_movie']}"}), 404
+        matched_plot = movie_row.iloc[0]["plot"]
+
+        result = explain_similarity(
+            user_plot=data["plot"],
+            matched_movie=data["matched_movie"],
+            matched_plot=matched_plot,
+            similarity_score=data["similarity_score"],
+        )
+        return jsonify({"success": True, **result})
 
     except Exception as e:
         traceback.print_exc()

@@ -68,10 +68,14 @@ from datetime import datetime
 
 import pandas as pd
 import ollama
+import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
 from schema import MovieAnalysis, PLAGIARISM_THRESHOLD
+
+# Load spaCy model once at import time (small model, ~12MB)
+_nlp = spacy.load("en_core_web_sm")
 
 # Which Ollama model to use for the style rewrite.
 # Change this if you pull a different model (e.g. "llama3", "mistral").
@@ -349,6 +353,152 @@ def run_pipeline(
     log.info("=" * 60)
 
     return result
+
+
+# -----------------------------------------------------------------------
+# BONUS: Similarity Explanation
+# -----------------------------------------------------------------------
+
+def extract_entities(text: str) -> dict[str, list[str]]:
+    """
+    Use spaCy NER to extract named entities from a plot, grouped by type.
+
+    This gives a deterministic, explainable foundation for similarity
+    analysis — we can say "both plots mention NASA and Mars" rather than
+    relying entirely on the LLM's interpretation.
+
+    Returns:
+        dict mapping entity type labels to lists of unique entity texts.
+        e.g. {"PERSON": ["Mark Watney"], "ORG": ["NASA"], "GPE": ["Mars"]}
+    """
+    doc = _nlp(text)
+    entities: dict[str, list[str]] = {}
+    for ent in doc.ents:
+        entities.setdefault(ent.label_, [])
+        if ent.text not in entities[ent.label_]:
+            entities[ent.label_].append(ent.text)
+    return entities
+
+
+def find_shared_entities(user_plot: str, matched_plot: str) -> list[dict]:
+    """
+    Compare spaCy NER output from both plots to find shared entities.
+
+    Uses case-insensitive matching and substring containment to catch
+    partial overlaps (e.g. "NASA" matches "NASA mission").
+
+    Returns:
+        List of dicts with:
+            entity:   The shared entity text
+            type:     NER label (PERSON, ORG, GPE, etc.)
+            in_user:  How it appears in the user's plot
+            in_match: How it appears in the matched plot
+    """
+    user_ents = extract_entities(user_plot)
+    match_ents = extract_entities(matched_plot)
+
+    shared = []
+    seen = set()
+
+    for ent_type, user_vals in user_ents.items():
+        match_vals = match_ents.get(ent_type, [])
+        for u in user_vals:
+            for m in match_vals:
+                u_low, m_low = u.lower(), m.lower()
+                # Exact or substring match
+                if u_low == m_low or u_low in m_low or m_low in u_low:
+                    key = (ent_type, min(u_low, m_low))
+                    if key not in seen:
+                        seen.add(key)
+                        shared.append({
+                            "entity": u if len(u) >= len(m) else m,
+                            "type": ent_type,
+                            "in_user": u,
+                            "in_match": m,
+                        })
+    return shared
+
+
+def explain_similarity(
+    user_plot: str,
+    matched_movie: str,
+    matched_plot: str,
+    similarity_score: float,
+) -> dict:
+    """
+    Combine spaCy NER (deterministic) + Ollama (creative) to explain
+    what's most similar between the user's plot and the closest match.
+
+    Two layers of analysis:
+        1. NER overlap:  Extracted by spaCy — shared names, places, orgs.
+                         Deterministic, reproducible, explainable.
+        2. LLM analysis: Ollama identifies deeper thematic/structural
+                         parallels, grounded by the NER findings.
+
+    Args:
+        user_plot:        The user's submitted plot.
+        matched_movie:    Title of the closest matching movie.
+        matched_plot:     The actual plot text of that movie from the database.
+        similarity_score: Cosine similarity from TF-IDF.
+
+    Returns:
+        dict with:
+            shared_entities: list of shared NER entities (deterministic)
+            aspects:         list of thematic aspects from LLM
+    """
+    # ── Layer 1: Deterministic NER overlap ──
+    shared = find_shared_entities(user_plot, matched_plot)
+
+    # Format NER findings for the LLM prompt
+    if shared:
+        ner_context = "Named Entity Recognition found these shared elements:\n"
+        for s in shared:
+            ner_context += f"  - {s['entity']} ({s['type']})\n"
+    else:
+        ner_context = "Named Entity Recognition found no directly shared names/places/organizations.\n"
+
+    # ── Layer 2: LLM thematic analysis, grounded by NER ──
+    prompt = f"""You are an expert story analyst comparing two movie plots.
+
+PLOT A (user's idea):
+"{user_plot}"
+
+PLOT B ("{matched_movie}" — an existing film):
+"{matched_plot}"
+
+These plots are {similarity_score:.0%} similar according to TF-IDF text analysis.
+
+{ner_context}
+YOUR TASK:
+Identify 3 to 5 specific aspects where these two plots are most similar.
+Focus on meaningful story elements, not surface-level word matches.
+Consider: premise, setting, character archetypes, plot structure, themes,
+conflict type, resolution pattern, tone, and genre conventions.
+
+For each aspect, explain clearly what both plots share and why a reader
+would notice the overlap.
+
+Respond with ONLY a JSON object:
+{{
+  "aspects": [
+    {{"aspect": "short label (2-4 words)", "explanation": "1-2 sentences explaining the shared element"}},
+    ...
+  ]
+}}"""
+
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        format="json",
+        options={"temperature": 0.3},
+    )
+
+    data = json.loads(response.message.content)
+
+    return {
+        "shared_entities": shared,
+        "aspects": data.get("aspects", []),
+    }
 
 
 # -----------------------------------------------------------------------

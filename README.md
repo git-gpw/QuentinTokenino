@@ -9,9 +9,10 @@
 You type a movie plot idea. The system does three things:
 
 1. **Plagiarism check** — Is your idea too close to an existing film?
-2. **Director match** — Which famous director made the closest existing movie?
-3. **Style rewrite** — Your plot, rewritten as that director would tell it.
-4. **Differentiation** — If flagged, suggests how to make your plot more original.
+2. **Similarity breakdown** — *What* makes it similar? (spaCy NER + LLM analysis)
+3. **Director match** — Which famous director made the closest existing movie?
+4. **Style rewrite** — Your plot, rewritten as that director would tell it.
+5. **Differentiation** — If flagged, suggests how to make your plot more original.
 
 Everything comes back as clean, structured JSON — and there's a web UI.
 
@@ -37,13 +38,29 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
   STEP 1: PLAGIARISM DETECTION
   +--------------------------------------------+
   |  Tool: TF-IDF (scikit-learn)               |
-  |  What: Compares your plot against 170+     |
+  |  What: Compares your plot against 16,000+  |
   |        real movies using word importance    |
   |        scores -- NOT AI, just math.        |
   |                                            |
   |  Result: "The Martian" (Ridley Scott)      |
   |          Similarity: 0.35                  |
   |          Plagiarism: YES (>= 0.30)         |
+  +--------------------------------------------+
+                         |
+                         v
+
+  STEP 1b: SIMILARITY EXPLANATION
+  +--------------------------------------------+
+  |  Tool: spaCy NER + Ollama                  |
+  |  What: spaCy extracts named entities from  |
+  |        both plots (deterministic). Ollama   |
+  |        then explains deeper thematic and    |
+  |        structural parallels, grounded by    |
+  |        the NER findings.                    |
+  |                                            |
+  |  Result: "Both feature a lone protagonist  |
+  |  stranded in a hostile environment who must |
+  |  use science to survive."                   |
   +--------------------------------------------+
                          |
                          v
@@ -101,11 +118,12 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 |---|---|---|
 | `app.py` | Flask web server — serves the UI and API | Routes to pipeline |
 | `static/index.html` | Web UI — Analyze tab + Evaluation Dashboard | No (frontend only) |
-| `pipeline.py` | Main pipeline — runs all 4 steps | Step 3 only |
+| `pipeline.py` | Main pipeline — runs all 4 steps + similarity/differentiation | Steps 1b, 3 |
 | `schema.py` | Defines the output format (6 fields) | No |
 | `evaluation.py` | Tests the pipeline with 15 movie plots | Optional |
-| `generate_dataset.py` | Creates the 170-movie database CSV | No |
-| `movies_dataset.csv` | The movie database (title, director, genre, plot) | No |
+| `data_cleaning.ipynb` | Jupyter notebook that merges CMU + MovieSum + IMDB data | No |
+| `generate_dataset.py` | Creates the original 196-movie seed database | No |
+| `movies_dataset.csv` | The movie database (16,455 movies, 8,155 directors) | No |
 | `requirements.txt` | Python package dependencies | -- |
 | `logs/` | Timestamped logs from every run | -- |
 
@@ -123,12 +141,15 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 # 1. Install Python dependencies
 pip install -r requirements.txt
 
-# 2. Install and start Ollama (https://ollama.com)
+# 2. Download the spaCy English model
+python -m spacy download en_core_web_sm
+
+# 3. Install and start Ollama (https://ollama.com)
 # Then pull the model:
 ollama pull gemma3
 
-# 3. Generate the movie database (if movies_dataset.csv doesn't exist)
-python generate_dataset.py
+# 4. The movie database (movies_dataset.csv) is included.
+#    To rebuild it from raw sources, run the data_cleaning.ipynb notebook.
 ```
 
 No API keys needed. Everything runs locally.
@@ -225,27 +246,29 @@ Calibrated against our test set:
        (web server)                     (browser UI)
             |                                |
             +--- /api/analyze ---------------+
+            +--- /api/similarity ------------+
             +--- /api/differentiate ---------+
             +--- /api/evaluate --------------+
             |
             v
                     pipeline.py
                    (orchestrator)
-                    /    |     \
-                   /     |      \
-        schema.py    scikit-learn    ollama
-     (output format)  (TF-IDF)    (Gemma3 LLM)
-              \          |           /
-               \         |          /
+                  /   |    |    \
+                 /    |    |     \
+        schema.py  sklearn spaCy  ollama
+      (validation) (TF-IDF) (NER) (Gemma3)
+              \       |      |      /
+               \      |      |     /
               movies_dataset.csv
-              (196 movies, local)
+            (16,455 movies, local)
 ```
 
 - `app.py` serves the web UI and routes API calls to the pipeline.
 - `schema.py` defines the contract -- what the output MUST look like.
 - `scikit-learn` does the math -- TF-IDF vectorization + cosine similarity.
-- `ollama` does the creativity -- style rewriting via Gemma3 (local).
-- `movies_dataset.csv` is the ground truth -- 196 real movies across 16 directors.
+- `spaCy` extracts named entities -- deterministic NER for grounded similarity analysis.
+- `ollama` does the creativity -- style rewriting and thematic analysis via Gemma3 (local).
+- `movies_dataset.csv` is the ground truth -- 16,455 real movies across 8,155 directors.
 - `pipeline.py` ties it all together and logs every step.
 
 ---
@@ -258,6 +281,7 @@ Calibrated against our test set:
 | Flask | >= 3.0.0 | Web server + API |
 | Pandas | >= 2.2.2 | Data loading |
 | scikit-learn | >= 1.5.0 | TF-IDF + cosine similarity |
+| spaCy | >= 3.7.0 | Named Entity Recognition (NER) |
 | Pydantic | >= 2.8.0 | Output validation |
 | Ollama | >= 0.6.0 | Local LLM (Gemma3) |
 | NumPy | >= 1.26.4 | Array operations |
@@ -266,7 +290,9 @@ Calibrated against our test set:
 
 ## Directors in the database
 
-Quentin Tarantino, Christopher Nolan, Wes Anderson, Martin Scorsese,
-Stanley Kubrick, Steven Spielberg, Ridley Scott, David Fincher,
-Denis Villeneuve, Alfred Hitchcock, James Cameron, Francis Ford Coppola,
-Clint Eastwood, Joel Coen, Peter Jackson, Guillermo del Toro
+**8,155 unique directors** from three merged sources (hand-written + MovieSum + CMU/IMDB).
+
+Top directors by film count: Michael Curtiz (42), Alfred Hitchcock (34),
+Clint Eastwood (32), Steven Spielberg (32), Martin Scorsese (28),
+Ridley Scott (25), Woody Allen (26), John Ford (24), Frank Capra (22),
+plus 8,146 more.

@@ -210,6 +210,41 @@
         .match-chip .director { color: #888; }
         .match-chip .score { color: #e94560; font-weight: 600; float: right; }
 
+        /* ── Similarity Aspects ──────────────────────── */
+        .entity-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+        .entity-chip {
+            background: #1a1a2e;
+            border: 1px solid #9b59b6;
+            border-radius: 14px;
+            padding: 0.25rem 0.65rem;
+            font-size: 0.78rem;
+            color: #c9a0dc;
+        }
+        .entity-chip .etype {
+            font-size: 0.65rem;
+            color: #7d3c98;
+            margin-left: 0.3rem;
+            text-transform: uppercase;
+        }
+        .aspect-item {
+            background: #1a1a2e;
+            border-left: 3px solid #9b59b6;
+            padding: 0.8rem 1rem;
+            margin-bottom: 0.6rem;
+            border-radius: 0 6px 6px 0;
+        }
+        .aspect-item .name {
+            font-weight: 600;
+            color: #9b59b6;
+            margin-bottom: 0.3rem;
+        }
+        .aspect-item .desc { font-size: 0.9rem; color: #aaa; line-height: 1.5; }
+
         /* ── Differentiation ─────────────────────────── */
         .strategies { margin-top: 0.8rem; }
         .strategy-item {
@@ -432,6 +467,19 @@
             <div class="detail-card">
                 <h3>Top Matches</h3>
                 <div class="top-matches" id="top-matches"></div>
+            </div>
+
+            <!-- Most Similar Aspects -->
+            <div class="detail-card" id="similarity-section" style="display:none;">
+                <h3>Most Similar Aspects</h3>
+                <p style="font-size:0.8rem; color:#666; margin-bottom:0.7rem;">
+                    spaCy NER (deterministic) + Ollama (thematic analysis)
+                </p>
+                <div class="loading-msg" id="similarity-loading">
+                    <span class="spinner"></span> Analyzing similarity with spaCy + Ollama...
+                </div>
+                <div id="shared-entities"></div>
+                <div id="similarity-aspects"></div>
             </div>
 
             <!-- Rewritten Plot -->
@@ -674,6 +722,63 @@
         document.getElementById('diff-loading').classList.remove('visible');
 
         document.getElementById('results').classList.add('visible');
+
+        // Auto-fetch similarity explanation in the background
+        getSimilarity();
+    }
+
+    // ── Similarity Explanation ──────────────────────
+    async function getSimilarity() {
+        if (!lastAnalysis) return;
+
+        const section = document.getElementById('similarity-section');
+        section.style.display = 'block';
+        document.getElementById('similarity-loading').classList.add('visible');
+        document.getElementById('shared-entities').innerHTML = '';
+        document.getElementById('similarity-aspects').innerHTML = '';
+
+        try {
+            const res = await fetch('/api/similarity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    plot: lastAnalysis.plot,
+                    matched_movie: lastAnalysis.matched_movie,
+                    similarity_score: lastAnalysis.similarity_score,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            // Render shared entities (NER)
+            const entEl = document.getElementById('shared-entities');
+            if (data.shared_entities && data.shared_entities.length > 0) {
+                entEl.innerHTML =
+                    '<div style="font-size:0.78rem; color:#888; margin-bottom:0.4rem;">Shared entities found by spaCy NER:</div>' +
+                    '<div class="entity-chips">' +
+                    data.shared_entities.map(e =>
+                        `<span class="entity-chip">${e.entity}<span class="etype">${e.type}</span></span>`
+                    ).join('') +
+                    '</div>';
+            } else {
+                entEl.innerHTML = '<div style="font-size:0.8rem; color:#666; margin-bottom:0.5rem;">No shared named entities detected (similarity is thematic, not name-based).</div>';
+            }
+
+            // Render LLM aspects
+            const aspEl = document.getElementById('similarity-aspects');
+            aspEl.innerHTML = (data.aspects || []).map(a =>
+                `<div class="aspect-item">
+                    <div class="name">${a.aspect}</div>
+                    <div class="desc">${a.explanation}</div>
+                </div>`
+            ).join('');
+
+        } catch (err) {
+            document.getElementById('similarity-aspects').innerHTML =
+                `<div style="color:#e94560; font-size:0.85rem;">Error: ${err.message}</div>`;
+        } finally {
+            document.getElementById('similarity-loading').classList.remove('visible');
+        }
     }
 
     // ── Differentiation ─────────────────────────────

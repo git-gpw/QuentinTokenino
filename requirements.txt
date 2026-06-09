@@ -9,6 +9,9 @@ pydantic>=2.8.0
 # LLM calls (style rewrite + LLM-as-a-Judge — runs locally via Ollama):
 ollama>=0.6.0
 
+# NLP (named entity recognition for similarity analysis):
+spacy>=3.7.0
+
 # Web UI:
 flask>=3.0.0
 

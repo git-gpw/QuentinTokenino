@@ -6,6 +6,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.5.0] - 2026-06-09
+
+### Summary
+Added spaCy NER for deterministic similarity analysis, expanded movie database
+from 196 to 16,455 films, and added a "Most Similar Aspects" UI panel.
+
+### Added
+- **spaCy NER integration** — `extract_entities()` and `find_shared_entities()`
+  in `pipeline.py`. Deterministic named entity extraction provides a grounded,
+  explainable layer before the LLM interprets thematic similarity.
+- `explain_similarity()` in `pipeline.py` — Two-layer analysis combining spaCy
+  NER (shared entities) + Ollama (thematic/structural parallels).
+- `/api/similarity` endpoint in `app.py`.
+- "Most Similar Aspects" card in the web UI — auto-fetches after analysis,
+  shows shared entity chips (from NER) and thematic aspects (from LLM).
+- `data_cleaning.ipynb` — Jupyter notebook that merges CMU Movie Summary Corpus,
+  HuggingFace MovieSum, and IMDB datasets into the final database.
+
+### Changed
+- **Movie database**: expanded from 196 hand-written movies to 16,455 movies
+  across 8,155 directors (merged from 3 sources via IMDB director lookup).
+- `requirements.txt`: added `spacy>=3.7.0` and `datasets>=2.20.0`.
+- Architecture diagram updated (spaCy as a fourth processing layer).
+
+### Verified
+- All 15 evaluation cases still pass at 100% accuracy with the larger dataset.
+
+
 ## [0.3.0] - 2026-06-09
 
 ### Summary
