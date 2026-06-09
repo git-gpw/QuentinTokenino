@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and evaluation results (regenerated on each run)
+logs/
+
+# Embeddings (legacy, no longer used in v0.2)
+*.npy
+
+# Secrets - NEVER commit API keys
+.env
+.env.local
