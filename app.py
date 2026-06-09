@@ -13,10 +13,9 @@ Endpoints:
 
 Start:
     python app.py
-    Then open http://localhost:5000
+    Then open http://localhost:8080
 """
 
-import json
 import traceback
 
 from flask import Flask, send_from_directory, request, jsonify
@@ -64,11 +63,11 @@ def analyze():
         return jsonify({"error": "Please enter a plot description."}), 400
 
     try:
-        # Run TF-IDF detection first (fast, for top matches)
+        # Run TF-IDF detection once, then pass result into pipeline
         detection = detect_plagiarism(plot, DF)
 
-        # Run full pipeline (includes LLM rewrite)
-        result = run_pipeline(plot, CSV_PATH)
+        # Run full pipeline, reusing cached DF and detection result
+        result = run_pipeline(plot, df=DF, detection=detection)
 
         return jsonify({
             "success": True,
@@ -93,6 +92,13 @@ def differentiate():
     Returns JSON: {"strategies": [...]}
     """
     data = request.get_json() or {}
+
+    # Validate required fields
+    required = ["plot", "matched_movie", "assigned_director", "similarity_score"]
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+
     try:
         strategies = suggest_differentiation(
             user_plot=data["plot"],
@@ -151,5 +157,5 @@ if __name__ == "__main__":
     print(f"  Model: {OLLAMA_MODEL} (via Ollama)")
     print(f"  Database: {len(DF)} movies, {DF['director'].nunique()} directors")
     print(f"  Threshold: {PLAGIARISM_THRESHOLD}")
-    print(f"\n  Open http://localhost:5000\n")
-    app.run(debug=True, port=5000)
+    print(f"\n  Open http://localhost:8080\n")
+    app.run(debug=True, port=8080)

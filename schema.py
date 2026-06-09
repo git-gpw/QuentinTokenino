@@ -6,7 +6,8 @@ The LLM's response MUST conform to these schemas or validation fails.
 
 CHANGE LOG:
     v2 - Fixed threshold inconsistency (was 0.45 here vs 0.75 in agent.py).
-         Single source of truth: PLAGIARISM_THRESHOLD = 0.40
+         Single source of truth: PLAGIARISM_THRESHOLD = 0.30
+    v3 - Switched LLM backend from Google Gemini to local Ollama (gemma3).
 """
 
 from pydantic import BaseModel, Field

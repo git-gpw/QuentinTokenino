@@ -11,8 +11,9 @@ You type a movie plot idea. The system does three things:
 1. **Plagiarism check** — Is your idea too close to an existing film?
 2. **Director match** — Which famous director made the closest existing movie?
 3. **Style rewrite** — Your plot, rewritten as that director would tell it.
+4. **Differentiation** — If flagged, suggests how to make your plot more original.
 
-Everything comes back as clean, structured JSON.
+Everything comes back as clean, structured JSON — and there's a web UI.
 
 ---
 
@@ -38,10 +39,10 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
   |  Tool: TF-IDF (scikit-learn)               |
   |  What: Compares your plot against 170+     |
   |        real movies using word importance    |
-  |        scores — NOT AI, just math.         |
+  |        scores -- NOT AI, just math.        |
   |                                            |
   |  Result: "The Martian" (Ridley Scott)      |
-  |          Similarity: 0.45                  |
+  |          Similarity: 0.35                  |
   |          Plagiarism: YES (>= 0.30)         |
   +--------------------------------------------+
                          |
@@ -59,12 +60,13 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 
   STEP 3: STYLE REWRITE
   +--------------------------------------------+
-  |  Tool: Gemini 2.0 Flash (Google AI)        |
+  |  Tool: Gemma3 via Ollama (runs locally)    |
   |  What: Rewrites your plot in Ridley        |
-  |        Scott's filmmaking style —          |
+  |        Scott's filmmaking style --         |
   |        his pacing, tone, and themes.       |
   |                                            |
   |  THIS IS THE ONLY STEP USING AI.           |
+  |  Runs on your machine, no API key needed.  |
   +--------------------------------------------+
                          |
                          v
@@ -75,7 +77,7 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
   |  What: Checks the output has all the       |
   |        right fields and correct types.     |
   |        If anything is wrong, it fails      |
-  |        loudly — no silent errors.          |
+  |        loudly -- no silent errors.         |
   +--------------------------------------------+
                          |
                          v
@@ -84,7 +86,7 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
   {
     "detected_plagiarism": true,
     "matched_movie": "The Martian",
-    "similarity_score": 0.45,
+    "similarity_score": 0.35,
     "assigned_director": "Ridley Scott",
     "rewritten_plot": "...",
     "stylistic_notes": "..."
@@ -97,13 +99,15 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 
 | File | What it does | Uses AI? |
 |---|---|---|
+| `app.py` | Flask web server — serves the UI and API | Routes to pipeline |
+| `static/index.html` | Web UI — Analyze tab + Evaluation Dashboard | No (frontend only) |
 | `pipeline.py` | Main pipeline — runs all 4 steps | Step 3 only |
 | `schema.py` | Defines the output format (6 fields) | No |
 | `evaluation.py` | Tests the pipeline with 15 movie plots | Optional |
 | `generate_dataset.py` | Creates the 170-movie database CSV | No |
 | `movies_dataset.csv` | The movie database (title, director, genre, plot) | No |
-| `requirements.txt` | Python package dependencies | — |
-| `logs/` | Timestamped logs from every run | — |
+| `requirements.txt` | Python package dependencies | -- |
+| `logs/` | Timestamped logs from every run | -- |
 
 ### Legacy files (from v0.1, no longer used):
 | File | Why it's here |
@@ -116,21 +120,30 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 ## Setup
 
 ```bash
-# 1. Install dependencies
+# 1. Install Python dependencies
 pip install -r requirements.txt
 
-# 2. Generate the movie database (if movies_dataset.csv doesn't exist)
-python generate_dataset.py
+# 2. Install and start Ollama (https://ollama.com)
+# Then pull the model:
+ollama pull gemma3
 
-# 3. Set your Google API key (needed for Steps 3-4 only)
-export GOOGLE_API_KEY="your-key-here"
+# 3. Generate the movie database (if movies_dataset.csv doesn't exist)
+python generate_dataset.py
 ```
+
+No API keys needed. Everything runs locally.
 
 ---
 
 ## Usage
 
-### Run the pipeline on a single plot:
+### Web UI (recommended):
+```bash
+python app.py
+# Open http://localhost:8080
+```
+
+### Run the pipeline from the command line:
 ```bash
 python pipeline.py
 ```
@@ -140,7 +153,7 @@ python pipeline.py
 python evaluation.py
 ```
 
-### Run evaluation WITHOUT an API key (tests plagiarism detection only):
+### Run evaluation without Ollama (tests plagiarism detection only):
 ```bash
 python evaluation.py --local-only
 ```
@@ -162,8 +175,8 @@ We test with **15 carefully designed plots** in three tiers:
 | Metric | What it answers | Current score |
 |---|---|---|
 | **Tool Accuracy** | Does the plagiarism detector get the right answer? | 100% (15/15) |
-| **JSON Compliance** | Does the output have valid structure? | Requires API key |
-| **Style Adherence** | Does the rewrite sound like the director? (1-5 scale) | Requires API key |
+| **JSON Compliance** | Does the output have valid structure? | Requires Ollama |
+| **Style Adherence** | Does the rewrite sound like the director? (1-5 scale) | Requires Ollama |
 
 ### Where to find results:
 
@@ -171,7 +184,7 @@ Every run writes:
 - **Human-readable log**: `logs/evaluation_<timestamp>.log`
 - **Machine-readable JSON**: `logs/eval_results_<timestamp>.json`
 
-Both contain the full trace — every decision, every score, every match.
+Both contain the full trace -- every decision, every score, every match.
 
 ---
 
@@ -182,12 +195,12 @@ Both contain the full trace — every decision, every score, every match.
 | | TF-IDF (current) | Neural Embeddings (old) |
 |---|---|---|
 | **Explainability** | "These specific words overlap" | "The vectors are close" (black box) |
-| **API dependency** | None — runs locally | Requires Google API call |
+| **API dependency** | None -- runs locally | Required Google API call |
 | **Determinism** | Same input = same output, always | Model updates can change results |
 | **Speed** | Instant (~10ms) | Network round-trip (~500ms) |
 | **Weakness** | Misses synonym-based similarity | Catches semantic similarity |
 
-We chose TF-IDF because the plagiarism step should be **explainable and deterministic**. If someone asks "why did you flag my plot?", we can point to exact word overlaps — not just "the AI thought so."
+We chose TF-IDF because the plagiarism step should be **explainable and deterministic**. If someone asks "why did you flag my plot?", we can point to exact word overlaps -- not just "the AI thought so."
 
 ### Why 0.30 as the plagiarism threshold?
 
@@ -196,27 +209,43 @@ Calibrated against our test set:
 - **Non-plagiarism cases** score between 0.06 and 0.26
 - **0.30** sits in the gap, giving 100% accuracy with zero false positives
 
+### Why Ollama instead of a cloud API?
+
+- **No API key** -- removes the #1 setup friction point
+- **No rate limits** -- evaluation suite runs without throttling
+- **Privacy** -- plot ideas never leave your machine
+- **Free** -- no per-token billing
+
 ---
 
 ## Architecture (what talks to what)
 
 ```
+        app.py (Flask)                 static/index.html
+       (web server)                     (browser UI)
+            |                                |
+            +--- /api/analyze ---------------+
+            +--- /api/differentiate ---------+
+            +--- /api/evaluate --------------+
+            |
+            v
                     pipeline.py
                    (orchestrator)
                     /    |     \
                    /     |      \
-        schema.py    scikit-learn   google-genai
-     (output format)  (TF-IDF)     (Gemini LLM)
+        schema.py    scikit-learn    ollama
+     (output format)  (TF-IDF)    (Gemma3 LLM)
               \          |           /
                \         |          /
               movies_dataset.csv
-              (170 movies, local)
+              (196 movies, local)
 ```
 
-- `schema.py` defines the contract — what the output MUST look like.
-- `scikit-learn` does the math — TF-IDF vectorization + cosine similarity.
-- `google-genai` does the creativity — style rewriting via Gemini 2.0 Flash.
-- `movies_dataset.csv` is the ground truth — 170 real movies across 15 directors.
+- `app.py` serves the web UI and routes API calls to the pipeline.
+- `schema.py` defines the contract -- what the output MUST look like.
+- `scikit-learn` does the math -- TF-IDF vectorization + cosine similarity.
+- `ollama` does the creativity -- style rewriting via Gemma3 (local).
+- `movies_dataset.csv` is the ground truth -- 196 real movies across 16 directors.
 - `pipeline.py` ties it all together and logs every step.
 
 ---
@@ -226,10 +255,11 @@ Calibrated against our test set:
 | Tool | Version | Role |
 |---|---|---|
 | Python | 3.10+ | Runtime |
+| Flask | >= 3.0.0 | Web server + API |
 | Pandas | >= 2.2.2 | Data loading |
 | scikit-learn | >= 1.5.0 | TF-IDF + cosine similarity |
 | Pydantic | >= 2.8.0 | Output validation |
-| google-genai | >= 2.8.0 | Gemini API client |
+| Ollama | >= 0.6.0 | Local LLM (Gemma3) |
 | NumPy | >= 1.26.4 | Array operations |
 
 ---

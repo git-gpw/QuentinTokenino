@@ -20,7 +20,7 @@ PROCESS FLOW:
     +------------------+
     |  STEP 1:         |   TF-IDF turns plots into word-importance scores.
     |  Plagiarism      |   Cosine similarity measures overlap.
-    |  Detection       |   Score >= 0.40 --> "too similar" flag.
+    |  Detection       |   Score >= 0.30 --> "too similar" flag.
     |                  |
     |  (scikit-learn)  |   NO API calls. NO neural networks.
     |  (runs locally)  |   Fully deterministic - same input = same output.
@@ -273,14 +273,19 @@ def run_pipeline(
     user_plot: str,
     csv_path: str = "movies_dataset.csv",
     log: logging.Logger | None = None,
+    df: pd.DataFrame | None = None,
+    detection: dict | None = None,
 ) -> MovieAnalysis:
     """
     Run the full cinematic pipeline end-to-end.
 
     Args:
         user_plot:  Free-text plot description from the user.
-        csv_path:   Path to the movie database CSV.
+        csv_path:   Path to the movie database CSV (used only if df is None).
         log:        Optional logger. If None, a new one is created.
+        df:         Optional pre-loaded DataFrame. Avoids re-reading CSV.
+        detection:  Optional pre-computed detection result from detect_plagiarism().
+                    Avoids running TF-IDF twice when the caller already has it.
 
     Returns:
         Validated MovieAnalysis object.
@@ -295,16 +300,18 @@ def run_pipeline(
     log.info("=" * 60)
     log.info(f"Input: \"{user_plot[:120]}{'...' if len(user_plot) > 120 else ''}\"")
 
-    # Load database
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Movie database not found at: {csv_path}")
-    df = pd.read_csv(csv_path)
-    log.info(f"Database loaded: {len(df)} movies from {csv_path}")
+    # Load database (skip if caller passed a DataFrame)
+    if df is None:
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"Movie database not found at: {csv_path}")
+        df = pd.read_csv(csv_path)
+    log.info(f"Database: {len(df)} movies")
 
     # -- STEP 1: Plagiarism detection (local) --
     log.info("-" * 50)
     log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
-    detection = detect_plagiarism(user_plot, df)
+    if detection is None:
+        detection = detect_plagiarism(user_plot, df)
 
     is_plag = detection["detected_plagiarism"]
     log.info(f"  Best match:  \"{detection['matched_movie']}\"")

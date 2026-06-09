@@ -47,8 +47,6 @@ from datetime import datetime
 
 import pandas as pd
 
-import ollama
-
 from pipeline import detect_plagiarism, run_pipeline, setup_logger, OLLAMA_MODEL
 from schema import PLAGIARISM_THRESHOLD
 
@@ -350,6 +348,8 @@ Rubric:
   3 = Moderate resemblance
   4 = Strong resemblance
   5 = Unmistakably in the director's style"""
+
+    import ollama
 
     response = ollama.chat(
         model=OLLAMA_MODEL,
