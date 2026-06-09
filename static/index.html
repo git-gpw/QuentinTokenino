@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuentinTokenino - Cinematic Pipeline</title>
+    <style>
+        /* ── Reset & Base ────────────────────────────── */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* ── Header ──────────────────────────────────── */
+        header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 2px solid #e94560;
+            padding: 1.2rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 {
+            font-size: 1.6rem;
+            color: #fff;
+            font-weight: 700;
+        }
+        header h1 span { color: #e94560; }
+        .header-meta {
+            font-size: 0.8rem;
+            color: #888;
+            text-align: right;
+        }
+        .header-meta strong { color: #e94560; }
+
+        /* ── Tabs ────────────────────────────────────── */
+        .tabs {
+            display: flex;
+            background: #111;
+            border-bottom: 1px solid #222;
+        }
+        .tab-btn {
+            padding: 0.9rem 2rem;
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 0.95rem;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { color: #ccc; }
+        .tab-btn.active {
+            color: #e94560;
+            border-bottom-color: #e94560;
+        }
+
+        /* ── Main Content ────────────────────────────── */
+        .container { max-width: 960px; margin: 0 auto; padding: 2rem; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* ── Analyze Tab ─────────────────────────────── */
+        .input-section {
+            background: #141420;
+            border: 1px solid #222;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .input-section label {
+            display: block;
+            margin-bottom: 0.6rem;
+            font-weight: 600;
+            color: #ccc;
+        }
+        textarea {
+            width: 100%;
+            min-height: 100px;
+            background: #0d0d15;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #e0e0e0;
+            padding: 0.9rem;
+            font-size: 0.95rem;
+            font-family: inherit;
+            resize: vertical;
+        }
+        textarea:focus { outline: none; border-color: #e94560; }
+
+        .btn {
+            display: inline-block;
+            padding: 0.7rem 1.8rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 0.8rem;
+        }
+        .btn-primary {
+            background: #e94560;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #d63851; }
+        .btn-primary:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #2a2a3e;
+            color: #ccc;
+            border: 1px solid #444;
+        }
+        .btn-secondary:hover { background: #333350; }
+        .btn-secondary:disabled {
+            background: #1a1a2e;
+            color: #555;
+            cursor: not-allowed;
+        }
+
+        /* ── Results ─────────────────────────────────── */
+        .results { display: none; }
+        .results.visible { display: block; }
+
+        .verdict-card {
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.2rem;
+            border: 1px solid #222;
+        }
+        .verdict-card.plagiarism {
+            background: linear-gradient(135deg, #2d1117 0%, #1a0a0e 100%);
+            border-color: #e94560;
+        }
+        .verdict-card.original {
+            background: linear-gradient(135deg, #0d2818 0%, #0a1a10 100%);
+            border-color: #2ecc71;
+        }
+        .verdict-label {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        .verdict-card.plagiarism .verdict-label { color: #e94560; }
+        .verdict-card.original .verdict-label { color: #2ecc71; }
+
+        .score-bar-container {
+            background: #1a1a2e;
+            border-radius: 20px;
+            height: 24px;
+            margin: 0.8rem 0;
+            overflow: hidden;
+            position: relative;
+        }
+        .score-bar {
+            height: 100%;
+            border-radius: 20px;
+            transition: width 0.8s ease;
+        }
+        .score-bar.low { background: linear-gradient(90deg, #2ecc71, #27ae60); }
+        .score-bar.medium { background: linear-gradient(90deg, #f39c12, #e67e22); }
+        .score-bar.high { background: linear-gradient(90deg, #e94560, #c0392b); }
+        .threshold-line {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 2px;
+            background: #fff;
+            opacity: 0.6;
+        }
+
+        .detail-card {
+            background: #141420;
+            border: 1px solid #222;
+            border-radius: 10px;
+            padding: 1.3rem;
+            margin-bottom: 1rem;
+        }
+        .detail-card h3 {
+            font-size: 0.85rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.7rem;
+        }
+        .detail-card p, .detail-card .content {
+            font-size: 0.95rem;
+            line-height: 1.6;
+            color: #ccc;
+        }
+
+        .top-matches {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+            gap: 0.6rem;
+        }
+        .match-chip {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 0.5rem 0.7rem;
+            font-size: 0.82rem;
+        }
+        .match-chip .title { color: #ddd; font-weight: 600; }
+        .match-chip .director { color: #888; }
+        .match-chip .score { color: #e94560; font-weight: 600; float: right; }
+
+        /* ── Differentiation ─────────────────────────── */
+        .strategies { margin-top: 0.8rem; }
+        .strategy-item {
+            background: #1a1a2e;
+            border-left: 3px solid #3498db;
+            padding: 0.8rem 1rem;
+            margin-bottom: 0.6rem;
+            border-radius: 0 6px 6px 0;
+        }
+        .strategy-item .name {
+            font-weight: 600;
+            color: #3498db;
+            margin-bottom: 0.3rem;
+        }
+        .strategy-item .desc { font-size: 0.9rem; color: #aaa; line-height: 1.5; }
+
+        /* ── Process Flow ────────────────────────────── */
+        .flow-steps {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .flow-step {
+            flex: 1;
+            min-width: 140px;
+            background: #141420;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 0.7rem;
+            text-align: center;
+            position: relative;
+            transition: all 0.3s;
+        }
+        .flow-step.active { border-color: #e94560; }
+        .flow-step.done { border-color: #2ecc71; }
+        .flow-step .step-num {
+            font-size: 0.7rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .flow-step .step-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #ccc;
+            margin-top: 0.2rem;
+        }
+        .flow-step.active .step-label { color: #e94560; }
+        .flow-step.done .step-label { color: #2ecc71; }
+
+        /* ── Eval Dashboard ──────────────────────────── */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .metric-card {
+            background: #141420;
+            border: 1px solid #222;
+            border-radius: 10px;
+            padding: 1.2rem;
+            text-align: center;
+        }
+        .metric-card .value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #e94560;
+        }
+        .metric-card .label {
+            font-size: 0.8rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 0.3rem;
+        }
+        .metric-card .sublabel {
+            font-size: 0.75rem;
+            color: #555;
+            margin-top: 0.2rem;
+        }
+
+        .eval-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .eval-table th {
+            background: #1a1a2e;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.72rem;
+            padding: 0.7rem 0.6rem;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .eval-table td {
+            padding: 0.6rem;
+            border-bottom: 1px solid #1a1a2e;
+            color: #ccc;
+        }
+        .eval-table tr:hover td { background: #141420; }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-plag { background: #3d1520; color: #e94560; }
+        .badge-orig { background: #0d2818; color: #2ecc71; }
+        .badge-pass { background: #0d2818; color: #2ecc71; }
+        .badge-fail { background: #3d1520; color: #e94560; }
+        .badge-correct { background: #0d2818; color: #2ecc71; }
+        .badge-wrong { background: #3d1520; color: #e94560; }
+
+        /* ── Spinner ─────────────────────────────────── */
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #444;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-msg {
+            display: none;
+            padding: 1rem;
+            text-align: center;
+            color: #888;
+        }
+        .loading-msg.visible { display: block; }
+
+        /* ── Responsive ──────────────────────────────── */
+        @media (max-width: 640px) {
+            .container { padding: 1rem; }
+            .metrics-grid { grid-template-columns: 1fr; }
+            .flow-steps { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<header>
+    <h1><span>Quentin</span>Tokenino</h1>
+    <div class="header-meta" id="header-meta">
+        <div>Model: <strong id="meta-model">loading...</strong></div>
+        <div>Database: <strong id="meta-db">...</strong> movies</div>
+    </div>
+</header>
+
+<!-- ═══════════════ TABS ═══════════════ -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="analyze">Analyze a Plot</button>
+    <button class="tab-btn" data-tab="evaluate">Evaluation Dashboard</button>
+</div>
+
+<!-- ═══════════════ ANALYZE TAB ═══════════════ -->
+<div class="container">
+    <div class="tab-panel active" id="tab-analyze">
+
+        <!-- Process Flow Indicator -->
+        <div class="flow-steps" id="flow-steps">
+            <div class="flow-step" id="step-1">
+                <div class="step-num">Step 1</div>
+                <div class="step-label">Plagiarism Check</div>
+            </div>
+            <div class="flow-step" id="step-2">
+                <div class="step-num">Step 2</div>
+                <div class="step-label">Director Routing</div>
+            </div>
+            <div class="flow-step" id="step-3">
+                <div class="step-num">Step 3</div>
+                <div class="step-label">Style Rewrite</div>
+            </div>
+            <div class="flow-step" id="step-4">
+                <div class="step-num">Step 4</div>
+                <div class="step-label">Validation</div>
+            </div>
+        </div>
+
+        <!-- Input -->
+        <div class="input-section">
+            <label for="plot-input">Describe your movie plot idea</label>
+            <textarea id="plot-input" placeholder="e.g. An astronaut gets stranded on a desert planet and has to grow food to survive while waiting for rescue..."></textarea>
+            <button class="btn btn-primary" id="analyze-btn" onclick="analyzePlot()">Analyze Plot</button>
+        </div>
+
+        <!-- Loading -->
+        <div class="loading-msg" id="analyze-loading">
+            <span class="spinner"></span> Running pipeline... (TF-IDF detection + LLM rewrite, ~30 seconds)
+        </div>
+
+        <!-- Results -->
+        <div class="results" id="results">
+            <!-- Verdict -->
+            <div class="verdict-card" id="verdict-card">
+                <div class="verdict-label" id="verdict-label"></div>
+                <div id="verdict-detail" style="color:#aaa; font-size:0.9rem;"></div>
+                <div class="score-bar-container">
+                    <div class="score-bar" id="score-bar"></div>
+                    <div class="threshold-line" id="threshold-line"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:#666; margin-top:0.2rem;">
+                    <span>0% similar</span>
+                    <span id="threshold-label"></span>
+                    <span>100% identical</span>
+                </div>
+            </div>
+
+            <!-- Top Matches -->
+            <div class="detail-card">
+                <h3>Top Matches</h3>
+                <div class="top-matches" id="top-matches"></div>
+            </div>
+
+            <!-- Rewritten Plot -->
+            <div class="detail-card">
+                <h3>Your Plot in <span id="director-name"></span>'s Style</h3>
+                <div class="content" id="rewritten-plot"></div>
+            </div>
+
+            <!-- Stylistic Notes -->
+            <div class="detail-card">
+                <h3>Stylistic Notes</h3>
+                <p id="stylistic-notes"></p>
+            </div>
+
+            <!-- Differentiation Strategies -->
+            <div class="detail-card" id="diff-section" style="display:none;">
+                <h3>How to Make It More Original</h3>
+                <button class="btn btn-secondary" id="diff-btn" onclick="getDifferentiation()">
+                    Get Differentiation Strategies
+                </button>
+                <div class="loading-msg" id="diff-loading">
+                    <span class="spinner"></span> Generating strategies...
+                </div>
+                <div class="strategies" id="strategies"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ EVALUATE TAB ═══════════════ -->
+    <div class="tab-panel" id="tab-evaluate">
+        <div class="input-section" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;">
+            <div style="flex:1;">
+                <h2 style="color:#ccc; font-size:1.1rem;">Evaluation Suite</h2>
+                <p style="color:#666; font-size:0.85rem; margin-top:0.3rem;">
+                    15 test cases: 5 plagiarism, 5 partial overlap, 5 original.
+                </p>
+            </div>
+            <button class="btn btn-primary" id="eval-full-btn" onclick="runEval(false)">
+                Run Full Evaluation
+            </button>
+            <button class="btn btn-secondary" id="eval-local-btn" onclick="runEval(true)">
+                Local Only (no LLM)
+            </button>
+        </div>
+
+        <div class="loading-msg" id="eval-loading">
+            <span class="spinner"></span> Running evaluation... (this takes a few minutes with LLM calls)
+        </div>
+
+        <!-- Metrics Cards -->
+        <div class="metrics-grid" id="metrics-grid" style="display:none;">
+            <div class="metric-card">
+                <div class="value" id="metric-accuracy">--</div>
+                <div class="label">Tool Accuracy</div>
+                <div class="sublabel">Plagiarism detection correct?</div>
+            </div>
+            <div class="metric-card">
+                <div class="value" id="metric-compliance">--</div>
+                <div class="label">JSON Compliance</div>
+                <div class="sublabel">Valid structured output?</div>
+            </div>
+            <div class="metric-card">
+                <div class="value" id="metric-style">--</div>
+                <div class="label">Style Adherence</div>
+                <div class="sublabel">Director voice (1-5)?</div>
+            </div>
+        </div>
+
+        <!-- Precision / Recall sub-metrics -->
+        <div class="detail-card" id="detail-metrics" style="display:none;">
+            <h3>Detection Breakdown</h3>
+            <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:0.8rem; text-align:center; margin-top:0.5rem;">
+                <div>
+                    <div style="font-size:1.4rem; font-weight:700; color:#2ecc71;" id="metric-tp">-</div>
+                    <div style="font-size:0.72rem; color:#666;">TRUE POS</div>
+                </div>
+                <div>
+                    <div style="font-size:1.4rem; font-weight:700; color:#e94560;" id="metric-fp">-</div>
+                    <div style="font-size:0.72rem; color:#666;">FALSE POS</div>
+                </div>
+                <div>
+                    <div style="font-size:1.4rem; font-weight:700; color:#2ecc71;" id="metric-tn">-</div>
+                    <div style="font-size:0.72rem; color:#666;">TRUE NEG</div>
+                </div>
+                <div>
+                    <div style="font-size:1.4rem; font-weight:700; color:#e94560;" id="metric-fn">-</div>
+                    <div style="font-size:0.72rem; color:#666;">FALSE NEG</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="detail-card" id="eval-table-card" style="display:none;">
+            <h3>Per-Case Results</h3>
+            <div style="overflow-x:auto; margin-top:0.5rem;">
+                <table class="eval-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Tier</th>
+                            <th>Expected</th>
+                            <th>Predicted</th>
+                            <th>Score</th>
+                            <th>Matched Movie</th>
+                            <th>JSON</th>
+                            <th>Style</th>
+                        </tr>
+                    </thead>
+                    <tbody id="eval-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════ SCRIPTS ═══════════════ -->
+<script>
+    // ── Tab switching ───────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        });
+    });
+
+    // ── Load system info ────────────────────────────
+    fetch('/api/info')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('meta-model').textContent = data.model;
+            document.getElementById('meta-db').textContent = data.database_size;
+        });
+
+    // ── State for differentiation ───────────────────
+    let lastAnalysis = null;
+
+    // ── Flow step animation ─────────────────────────
+    function setFlowStep(n) {
+        for (let i = 1; i <= 4; i++) {
+            const el = document.getElementById('step-' + i);
+            el.classList.remove('active', 'done');
+            if (i < n) el.classList.add('done');
+            if (i === n) el.classList.add('active');
+        }
+    }
+    function clearFlow() {
+        for (let i = 1; i <= 4; i++) {
+            document.getElementById('step-' + i).classList.remove('active', 'done');
+        }
+    }
+
+    // ── Analyze ─────────────────────────────────────
+    async function analyzePlot() {
+        const plot = document.getElementById('plot-input').value.trim();
+        if (!plot) return;
+
+        const btn = document.getElementById('analyze-btn');
+        btn.disabled = true;
+        document.getElementById('results').classList.remove('visible');
+        document.getElementById('analyze-loading').classList.add('visible');
+        setFlowStep(1);
+
+        // Animate steps (approximate timing)
+        setTimeout(() => setFlowStep(2), 500);
+        setTimeout(() => setFlowStep(3), 1500);
+
+        try {
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ plot }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) throw new Error(data.error || 'Server error');
+
+            setFlowStep(4);
+            setTimeout(() => {
+                for (let i = 1; i <= 4; i++) {
+                    document.getElementById('step-' + i).classList.remove('active');
+                    document.getElementById('step-' + i).classList.add('done');
+                }
+            }, 400);
+
+            lastAnalysis = { ...data.result, plot, top_matches: data.top_matches, threshold: data.threshold };
+            renderResults(data);
+
+        } catch (err) {
+            alert('Error: ' + err.message);
+            clearFlow();
+        } finally {
+            btn.disabled = false;
+            document.getElementById('analyze-loading').classList.remove('visible');
+        }
+    }
+
+    function renderResults(data) {
+        const r = data.result;
+        const card = document.getElementById('verdict-card');
+        const isPlag = r.detected_plagiarism;
+
+        card.className = 'verdict-card ' + (isPlag ? 'plagiarism' : 'original');
+        document.getElementById('verdict-label').textContent =
+            isPlag ? 'Plagiarism Detected' : 'Original Plot';
+        document.getElementById('verdict-detail').textContent =
+            `Closest match: "${r.matched_movie}" by ${r.assigned_director} (${(r.similarity_score * 100).toFixed(1)}% similar)`;
+
+        // Score bar
+        const pct = Math.min(r.similarity_score * 100, 100);
+        const bar = document.getElementById('score-bar');
+        bar.style.width = pct + '%';
+        bar.className = 'score-bar ' + (pct >= 30 ? 'high' : pct >= 15 ? 'medium' : 'low');
+
+        const threshPct = data.threshold * 100;
+        document.getElementById('threshold-line').style.left = threshPct + '%';
+        document.getElementById('threshold-label').textContent = 'Threshold: ' + threshPct + '%';
+
+        // Top matches
+        const matchesEl = document.getElementById('top-matches');
+        matchesEl.innerHTML = data.top_matches.map(m =>
+            `<div class="match-chip">
+                <span class="score">${(m.score * 100).toFixed(0)}%</span>
+                <div class="title">${m.title}</div>
+                <div class="director">${m.director}</div>
+            </div>`
+        ).join('');
+
+        // Rewrite
+        document.getElementById('director-name').textContent = r.assigned_director;
+        document.getElementById('rewritten-plot').textContent = r.rewritten_plot;
+        document.getElementById('stylistic-notes').textContent = r.stylistic_notes;
+
+        // Differentiation section - always show, more useful when flagged
+        const diffSection = document.getElementById('diff-section');
+        diffSection.style.display = 'block';
+        document.getElementById('strategies').innerHTML = '';
+        document.getElementById('diff-btn').style.display = 'inline-block';
+        document.getElementById('diff-loading').classList.remove('visible');
+
+        document.getElementById('results').classList.add('visible');
+    }
+
+    // ── Differentiation ─────────────────────────────
+    async function getDifferentiation() {
+        if (!lastAnalysis) return;
+
+        const btn = document.getElementById('diff-btn');
+        btn.style.display = 'none';
+        document.getElementById('diff-loading').classList.add('visible');
+
+        try {
+            const res = await fetch('/api/differentiate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    plot: lastAnalysis.plot,
+                    matched_movie: lastAnalysis.matched_movie,
+                    assigned_director: lastAnalysis.assigned_director,
+                    similarity_score: lastAnalysis.similarity_score,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            const el = document.getElementById('strategies');
+            el.innerHTML = data.strategies.map(s =>
+                `<div class="strategy-item">
+                    <div class="name">${s.strategy}</div>
+                    <div class="desc">${s.description}</div>
+                </div>`
+            ).join('');
+
+        } catch (err) {
+            alert('Error: ' + err.message);
+            btn.style.display = 'inline-block';
+        } finally {
+            document.getElementById('diff-loading').classList.remove('visible');
+        }
+    }
+
+    // ── Evaluation ──────────────────────────────────
+    async function runEval(localOnly) {
+        const fullBtn = document.getElementById('eval-full-btn');
+        const localBtn = document.getElementById('eval-local-btn');
+        fullBtn.disabled = true;
+        localBtn.disabled = true;
+        document.getElementById('eval-loading').classList.add('visible');
+        document.getElementById('metrics-grid').style.display = 'none';
+        document.getElementById('detail-metrics').style.display = 'none';
+        document.getElementById('eval-table-card').style.display = 'none';
+
+        try {
+            const res = await fetch('/api/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ local_only: localOnly }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            renderEvalResults(data.report);
+
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            fullBtn.disabled = false;
+            localBtn.disabled = false;
+            document.getElementById('eval-loading').classList.remove('visible');
+        }
+    }
+
+    function renderEvalResults(report) {
+        const m = report.metrics;
+
+        // Metric cards
+        document.getElementById('metric-accuracy').textContent =
+            (m.tool_accuracy.accuracy * 100).toFixed(0) + '%';
+        document.getElementById('metric-compliance').textContent =
+            m.schema_compliance.total_attempted > 0
+                ? (m.schema_compliance.compliance_rate * 100).toFixed(0) + '%'
+                : 'N/A';
+        document.getElementById('metric-style').textContent =
+            m.style_adherence.mean_score
+                ? m.style_adherence.mean_score.toFixed(1) + '/5'
+                : 'N/A';
+        document.getElementById('metrics-grid').style.display = 'grid';
+
+        // Breakdown
+        document.getElementById('metric-tp').textContent = m.tool_accuracy.true_positives;
+        document.getElementById('metric-fp').textContent = m.tool_accuracy.false_positives;
+        document.getElementById('metric-tn').textContent = m.tool_accuracy.true_negatives;
+        document.getElementById('metric-fn').textContent = m.tool_accuracy.false_negatives;
+        document.getElementById('detail-metrics').style.display = 'block';
+
+        // Table
+        const tbody = document.getElementById('eval-tbody');
+        tbody.innerHTML = report.cases.map(c => {
+            const expectBadge = c.expected_plagiarism
+                ? '<span class="badge badge-plag">PLAG</span>'
+                : '<span class="badge badge-orig">ORIG</span>';
+            const predBadge = c.predicted_plagiarism === null
+                ? '-'
+                : c.predicted_plagiarism
+                    ? '<span class="badge badge-plag">PLAG</span>'
+                    : '<span class="badge badge-orig">ORIG</span>';
+            const correct = c.predicted_plagiarism === c.expected_plagiarism;
+            const correctBadge = c.predicted_plagiarism !== null
+                ? `<span class="badge ${correct ? 'badge-correct' : 'badge-wrong'}">${correct ? 'CORRECT' : 'WRONG'}</span>`
+                : '-';
+            const jsonBadge = c.schema_valid
+                ? '<span class="badge badge-pass">PASS</span>'
+                : c.llm_attempted
+                    ? '<span class="badge badge-fail">FAIL</span>'
+                    : '-';
+            const style = c.style_score !== null ? c.style_score + '/5' : '-';
+
+            return `<tr>
+                <td>${c.id}</td>
+                <td><span style="font-size:0.78rem;color:#666;">${c.tier.replace('_',' ')}</span></td>
+                <td>${expectBadge}</td>
+                <td>${predBadge} ${correctBadge}</td>
+                <td>${c.similarity_score !== null ? c.similarity_score.toFixed(4) : '-'}</td>
+                <td style="max-width:200px;">${c.matched_movie || '-'}</td>
+                <td>${jsonBadge}</td>
+                <td>${style}</td>
+            </tr>`;
+        }).join('');
+        document.getElementById('eval-table-card').style.display = 'block';
+    }
+
+    // Allow Ctrl+Enter to submit
+    document.getElementById('plot-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyzePlot();
+    });
+</script>
+
+</body>
+</html>

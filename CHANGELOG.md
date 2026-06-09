@@ -6,6 +6,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.3.0] - 2026-06-09
+
+### Summary
+Added a web UI, switched to local Ollama (no API keys), and added
+LLM-powered differentiation strategies.
+
+### Added
+- `app.py` — Flask web server with 4 API endpoints.
+- `static/index.html` — Single-page UI with two tabs:
+  - **Analyze**: paste a plot, see plagiarism verdict, score bar,
+    top matches, director-style rewrite, and differentiation tips.
+  - **Evaluate**: run the 15-case test suite with metrics dashboard.
+- `suggest_differentiation()` in `pipeline.py` — when a plot is flagged,
+  suggests 3-5 specific changes to make it more original.
+- Animated process flow indicator showing Steps 1-4 in real time.
+
+### Changed
+- **LLM backend**: switched from Google Gemini API to local Ollama (gemma3).
+  No API key needed, no rate limits, fully offline.
+- `requirements.txt`: replaced `google-genai` with `ollama` and added `flask`.
+
+### Removed
+- All Google API key handling (`GOOGLE_API_KEY`, `GEMINI_API_KEY` env vars).
+
+
 ## [0.2.0] - 2026-06-09
 
 ### Summary

@@ -345,6 +345,62 @@ def run_pipeline(
 
 
 # -----------------------------------------------------------------------
+# BONUS: Differentiation Strategies
+# -----------------------------------------------------------------------
+
+def suggest_differentiation(
+    user_plot: str,
+    matched_movie: str,
+    assigned_director: str,
+    similarity_score: float,
+) -> list[dict]:
+    """
+    When a plot is flagged (or borderline), suggest specific changes
+    to make it more original.
+
+    This is the creative consulting step: instead of just saying
+    "you copied The Martian," it says "here's how to make it yours."
+
+    Returns:
+        List of dicts, each with:
+            strategy:    Short name (e.g. "Shift the setting")
+            description: What to change and why it creates distance
+    """
+    prompt = f"""You are a creative writing consultant helping a screenwriter
+make their plot idea more original.
+
+THEIR PLOT:
+"{user_plot}"
+
+PROBLEM:
+This is {similarity_score:.0%} similar to "{matched_movie}" (directed by {assigned_director}).
+
+YOUR TASK:
+Suggest 3 to 5 specific, actionable changes that would make this plot
+meaningfully different from "{matched_movie}" while keeping the core
+idea intact. Each suggestion should create real distance from the
+existing film, not just surface-level changes.
+
+Respond with ONLY a JSON object:
+{{
+  "strategies": [
+    {{"strategy": "short name", "description": "1-2 sentences explaining the change and why it helps"}},
+    ...
+  ]
+}}"""
+
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        format="json",
+        options={"temperature": 0.7},
+    )
+
+    data = json.loads(response.message.content)
+    return data.get("strategies", [])
+
+
+# -----------------------------------------------------------------------
 # Standalone execution
 # -----------------------------------------------------------------------
 
