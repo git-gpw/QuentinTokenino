@@ -8,9 +8,9 @@
 
 You type a movie plot idea. The system does three things:
 
-1. **Plagiarism check** — Is your idea too close to an existing film?
+1. **Plagiarism check** — Is your idea too close to an existing film? (SBERT + TF-IDF dual-signal detection)
 2. **Similarity breakdown** — *What* makes it similar? (spaCy NER + LLM analysis)
-3. **Director match** — Which famous director made the closest existing movie?
+3. **Director match** — Which famous director made the closest existing movie? (popularity-weighted ranking)
 4. **Style rewrite** — Your plot, rewritten as that director would tell it.
 5. **Differentiation** — If flagged, suggests how to make your plot more original.
 
@@ -37,10 +37,13 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
             
   STEP 1: PLAGIARISM DETECTION
   +--------------------------------------------+
-  |  Tool: TF-IDF (scikit-learn)               |
+  |  Tool: SBERT + TF-IDF (dual-signal)        |
   |  What: Compares your plot against 16,000+  |
-  |        real movies using word importance    |
-  |        scores -- NOT AI, just math.        |
+  |        real movies using semantic meaning   |
+  |        (SBERT) AND vocabulary overlap       |
+  |        (TF-IDF), combined via geometric    |
+  |        mean. Famous movies rank higher.    |
+  |        NOT a cloud API -- runs locally.    |
   |                                            |
   |  Result: "The Martian" (Ridley Scott)      |
   |          Similarity: 0.35                  |
@@ -120,9 +123,9 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 | `static/index.html` | Web UI — Analyze tab + Evaluation Dashboard | No (frontend only) |
 | `pipeline.py` | Main pipeline — runs all 4 steps + similarity/differentiation | Steps 1b, 3 |
 | `schema.py` | Defines the output format (6 fields) | No |
-| `evaluation.py` | Tests the pipeline with 15 movie plots | Optional |
+| `evaluation.py` | Tests the pipeline with 50 movie plots (varied lengths) | Optional |
 | `data_cleaning.ipynb` | Jupyter notebook that merges CMU + MovieSum + IMDB data | No |
-| `movies_dataset.csv` | The movie database (16,455 movies, 8,155 directors) | No |
+| `movies_dataset.csv` | The movie database (16,455 movies, 8,155 directors, popularity scores) | No |
 | `requirements.txt` | Python package dependencies | -- |
 | `logs/` | Timestamped logs from every run | -- |
 
@@ -162,12 +165,12 @@ python app.py
 python pipeline.py
 ```
 
-### Run the full evaluation (15 test cases, all metrics):
+### Run the full evaluation (50 test cases, all metrics):
 ```bash
 python evaluation.py
 ```
 
-### Run evaluation without Ollama (tests plagiarism detection only):
+### Run evaluation without Ollama (tests SBERT+TF-IDF detection only):
 ```bash
 python evaluation.py --local-only
 ```
@@ -176,21 +179,23 @@ python evaluation.py --local-only
 
 ## How we measure performance
 
-We test with **15 carefully designed plots** in three tiers:
+We test with **50 carefully designed plots** across three tiers and varied lengths (short / medium / long):
 
 | Tier | Count | What | Example |
 |---|---|---|---|
-| **Blatant plagiarism** | 5 | Near-copies of real films | "Two hitmen discuss burgers before a hit..." (Pulp Fiction) |
-| **Partial overlap** | 5 | Same genre, different story | "Soldiers in WWII complete a rescue mission" |
-| **Fully original** | 5 | No match in the database | "A cheese sculptor uncovers a dairy conspiracy" |
+| **Blatant plagiarism** | 15 | Near-copies of real films (5 short, 5 medium, 5 long) | "Two hitmen discuss burgers before a hit..." (Pulp Fiction) |
+| **Partial overlap** | 15 | Same genre, different story (5 short, 5 medium, 5 long) | "Soldiers in WWII complete a rescue mission" |
+| **Fully original** | 20 | No match in the database (mixed lengths) | "A cheese sculptor uncovers a dairy conspiracy" |
+
+Length variety ensures the detector works regardless of whether the user writes one sentence or a full paragraph.
 
 ### Three metrics:
 
-| Metric | What it answers | Current score |
-|---|---|---|
-| **Tool Accuracy** | Does the plagiarism detector get the right answer? | 100% (15/15) |
-| **JSON Compliance** | Does the output have valid structure? | Requires Ollama |
-| **Style Adherence** | Does the rewrite sound like the director? (1-5 scale) | Requires Ollama |
+| Metric | What it answers |
+|---|---|
+| **Tool Accuracy** | Does the plagiarism detector get the right answer? |
+| **JSON Compliance** | Does the output have valid structure? |
+| **Style Adherence** | Does the rewrite sound like the director? (1-5 scale, requires Ollama) |
 
 ### Where to find results:
 
@@ -204,24 +209,36 @@ Both contain the full trace -- every decision, every score, every match.
 
 ## Key design decisions
 
-### Why TF-IDF instead of neural embeddings?
+### Why SBERT + TF-IDF (dual-signal)?
 
-| | TF-IDF (current) | Neural Embeddings (old) |
+Neither signal works well alone:
+
+| Signal | Catches | Misses |
 |---|---|---|
-| **Explainability** | "These specific words overlap" | "The vectors are close" (black box) |
-| **API dependency** | None -- runs locally | Required Google API call |
-| **Determinism** | Same input = same output, always | Model updates can change results |
-| **Speed** | Instant (~10ms) | Network round-trip (~500ms) |
-| **Weakness** | Misses synonym-based similarity | Catches semantic similarity |
+| **SBERT** (semantic embeddings) | Paraphrases using different words | Can't tell "same story" from "same genre" |
+| **TF-IDF** (vocabulary overlap) | Exact word reuse | Misses synonym-based rewording |
 
-We chose TF-IDF because the plagiarism step should be **explainable and deterministic**. If someone asks "why did you flag my plot?", we can point to exact word overlaps -- not just "the AI thought so."
+Combined via **geometric mean** (`√(sbert × tfidf)`), both signals must be high for a match. This filters out genre-level false positives while catching true paraphrases — regardless of plot length.
+
+| | Dual-signal (current) | Cloud embeddings (v0.1) |
+|---|---|---|
+| **API dependency** | None — runs locally | Required Google API call |
+| **Determinism** | Same input = same output, always | Model updates can change results |
+| **Speed** | ~10ms per query (pre-computed) | Network round-trip (~500ms) |
+| **Length-robust** | Yes — SBERT normalizes meaning | Partially |
+
+### Why popularity-weighted ranking?
+
+When two movies score similarly, the more **famous** one ranks higher. This is powered by IMDB vote counts (log-scaled, normalized to 0–1). Popularity affects *which* movie is shown as the match, **not** the plagiarism yes/no decision.
 
 ### Why 0.30 as the plagiarism threshold?
 
-Calibrated against our test set:
-- **Plagiarism cases** score between 0.32 and 0.81
-- **Non-plagiarism cases** score between 0.06 and 0.26
-- **0.30** sits in the gap, giving 100% accuracy with zero false positives
+Calibrated against our 50-case test set (see `evaluation.py`):
+- **Blatant plagiarism** scores 0.20 – 0.70 (geometric mean)
+- **Partial overlap** scores 0.21 – 0.37
+- **Original plots** score 0.15 – 0.32
+- **0.30** balances precision and recall for the screenwriter use case
+- Conservative alternative: 0.38 (100% precision, lower recall)
 
 ### Why Ollama instead of a cloud API?
 
@@ -248,8 +265,8 @@ Calibrated against our test set:
                    (orchestrator)
                   /   |    |    \
                  /    |    |     \
-        schema.py  sklearn spaCy  ollama
-      (validation) (TF-IDF) (NER) (Gemma3)
+        schema.py  SBERT  spaCy  ollama
+      (validation) TF-IDF (NER) (Gemma3)
               \       |      |      /
                \      |      |     /
               movies_dataset.csv
@@ -258,11 +275,12 @@ Calibrated against our test set:
 
 - `app.py` serves the web UI and routes API calls to the pipeline.
 - `schema.py` defines the contract -- what the output MUST look like.
-- `scikit-learn` does the math -- TF-IDF vectorization + cosine similarity.
+- `sentence-transformers` provides SBERT semantic embeddings (all-MiniLM-L6-v2, ~80MB, local).
+- `scikit-learn` does TF-IDF vectorization + cosine similarity.
 - `spaCy` extracts named entities -- deterministic NER for grounded similarity analysis.
 - `ollama` does the creativity -- style rewriting and thematic analysis via Gemma3 (local).
 - `movies_dataset.csv` is the ground truth -- 16,455 real movies across 8,155 directors.
-- `pipeline.py` ties it all together and logs every step.
+- `pipeline.py` ties it all together, caches NLP features to disk, and logs every step.
 
 ---
 
@@ -273,6 +291,7 @@ Calibrated against our test set:
 | Python | 3.10+ | Runtime |
 | Flask | >= 3.0.0 | Web server + API |
 | Pandas | >= 2.2.2 | Data loading |
+| sentence-transformers | >= 3.0.0 | SBERT semantic embeddings (all-MiniLM-L6-v2) |
 | scikit-learn | >= 1.5.0 | TF-IDF + cosine similarity |
 | spaCy | >= 3.7.0 | Named Entity Recognition (NER) |
 | Pydantic | >= 2.8.0 | Output validation |

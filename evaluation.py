@@ -3,7 +3,7 @@ evaluation.py - Evaluation suite for the Cinematic Pipeline.
 
 WHAT THIS DOES (plain English):
 ================================
-Runs 15 movie plots through the pipeline and measures how well it works.
+Runs 50 movie plots through the pipeline and measures how well it works.
 
 We test three things:
     1. TOOL ACCURACY    - Does the plagiarism detector get the right answer?
@@ -16,9 +16,12 @@ file so you can inspect exactly what happened after the fact.
 
 TEST SET DESIGN:
 ================
-    5 BLATANT PLAGIARISM  - Near-paraphrases of real films. Should be caught.
-    5 PARTIAL OVERLAP     - Same genre but different story. Should NOT be caught.
-    5 FULLY ORIGINAL      - No database match at all. Should NOT be caught.
+   15 BLATANT PLAGIARISM  - Near-paraphrases of real films. Should be caught.
+                            5 short (1-2 sentences), 5 medium (3-4), 5 long (6-8).
+   15 PARTIAL OVERLAP     - Same genre but different story. Should NOT be caught.
+                            5 short, 5 medium, 5 long.
+   20 FULLY ORIGINAL      - No database match at all. Should NOT be caught.
+                            Mix of lengths.
 
 
 METRICS EXPLAINED:
@@ -47,19 +50,27 @@ from datetime import datetime
 
 import pandas as pd
 
-from pipeline import detect_plagiarism, run_pipeline, setup_logger, OLLAMA_MODEL
+from pipeline import detect_plagiarism, run_pipeline, init_nlp, setup_logger, OLLAMA_MODEL
 from schema import PLAGIARISM_THRESHOLD
 
 
 # -----------------------------------------------------------------------
-# 15 Test Cases: ground truth labels for plagiarism detection
+# 50 Test Cases: ground truth labels for plagiarism detection
+# Each case has a "length" field (short/medium/long) to verify the hybrid
+# scorer handles varying plot lengths consistently.
 # -----------------------------------------------------------------------
 
 EVAL_CASES = [
-    # === TIER 1: BLATANT PLAGIARISM (expected: True) ====================
+    # =================================================================
+    # TIER 1: BLATANT PLAGIARISM (expected: True)
+    # 15 cases: 5 short (~1-2 sentences), 5 medium (~3-4), 5 long (~6-8)
+    # =================================================================
+
+    # -- Short plagiarism (1-2 sentences) --
     {
         "id": "PLAG-01",
         "tier": "blatant_plagiarism",
+        "length": "short",
         "user_plot": (
             "Two mob hitmen discuss cheeseburgers and divine intervention "
             "before carrying out a hit for their gangster boss in Los Angeles."
@@ -70,30 +81,32 @@ EVAL_CASES = [
     {
         "id": "PLAG-02",
         "tier": "blatant_plagiarism",
+        "length": "short",
         "user_plot": (
-            "After uncovering a mysterious artifact beneath the lunar surface, "
-            "a spacecraft crew embarks on a mission toward Jupiter guided by a "
-            "sentient supercomputer that begins to malfunction."
+            "A computer hacker learns the world is a simulated reality "
+            "controlled by machines and joins a rebellion to free humanity."
         ),
         "expected_plagiarism": True,
-        "notes": "Near-paraphrase of 2001: A Space Odyssey",
+        "notes": "Near-paraphrase of The Matrix",
     },
     {
         "id": "PLAG-03",
         "tier": "blatant_plagiarism",
+        "length": "short",
         "user_plot": (
-            "A German bounty hunter frees a slave and together they rescue "
-            "the slave's wife from a brutal Mississippi plantation owner."
+            "An insomniac office worker and a soap salesman start an "
+            "underground fight club that spirals into anarchist terrorism."
         ),
         "expected_plagiarism": True,
-        "notes": "Near-paraphrase of Django Unchained",
+        "notes": "Near-paraphrase of Fight Club",
     },
     {
         "id": "PLAG-04",
         "tier": "blatant_plagiarism",
+        "length": "short",
         "user_plot": (
-            "A thief who steals secrets from people's dreams is hired to do "
-            "the reverse - plant an idea deep inside a target's subconscious mind."
+            "A thief who steals secrets from people's dreams is hired to "
+            "plant an idea deep inside a target's subconscious mind."
         ),
         "expected_plagiarism": True,
         "notes": "Near-paraphrase of Inception",
@@ -101,18 +114,180 @@ EVAL_CASES = [
     {
         "id": "PLAG-05",
         "tier": "blatant_plagiarism",
+        "length": "short",
         "user_plot": (
-            "Two homicide detectives hunt a methodical serial killer who "
-            "stages gruesome murders based on the seven deadly sins."
+            "Two detectives hunt a serial killer who stages murders "
+            "based on the seven deadly sins."
         ),
         "expected_plagiarism": True,
         "notes": "Near-paraphrase of Se7en",
     },
 
-    # === TIER 2: PARTIAL OVERLAP (expected: False) ======================
+    # -- Medium plagiarism (3-4 sentences) --
+    {
+        "id": "PLAG-06",
+        "tier": "blatant_plagiarism",
+        "length": "medium",
+        "user_plot": (
+            "After uncovering a mysterious artifact beneath the lunar surface, "
+            "a spacecraft crew embarks on a mission toward Jupiter guided by a "
+            "sentient supercomputer that begins to malfunction. The crew must "
+            "survive as the computer's logic turns against them."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of 2001: A Space Odyssey",
+    },
+    {
+        "id": "PLAG-07",
+        "tier": "blatant_plagiarism",
+        "length": "medium",
+        "user_plot": (
+            "A German bounty hunter frees a slave and together they rescue "
+            "the slave's wife from a brutal Mississippi plantation owner. "
+            "Their journey takes them across the antebellum South as they "
+            "pose as traveling dentists to infiltrate the plantation."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Django Unchained",
+    },
+    {
+        "id": "PLAG-08",
+        "tier": "blatant_plagiarism",
+        "length": "medium",
+        "user_plot": (
+            "The aging patriarch of an organized crime dynasty transfers "
+            "control of his empire to his reluctant youngest son. As rival "
+            "families scheme against them, the son transforms from a war hero "
+            "into a ruthless mob boss."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of The Godfather",
+    },
+    {
+        "id": "PLAG-09",
+        "tier": "blatant_plagiarism",
+        "length": "medium",
+        "user_plot": (
+            "A billionaire creates a theme park filled with cloned dinosaurs "
+            "on a remote island. When the security systems fail during a "
+            "tropical storm, the prehistoric creatures escape and hunt the "
+            "stranded visitors."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Jurassic Park",
+    },
+    {
+        "id": "PLAG-10",
+        "tier": "blatant_plagiarism",
+        "length": "medium",
+        "user_plot": (
+            "A slow-witted but kind-hearted man from Alabama accidentally "
+            "influences several major historical events while pursuing his "
+            "childhood sweetheart. His journey spans decades from the Vietnam "
+            "War to the Watergate scandal."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Forrest Gump",
+    },
+
+    # -- Long plagiarism (6-8 sentences) --
+    {
+        "id": "PLAG-11",
+        "tier": "blatant_plagiarism",
+        "length": "long",
+        "user_plot": (
+            "A caretaker and his family move into an isolated mountain hotel "
+            "for the winter season. The hotel has a dark history of violence "
+            "and madness. As winter storms cut them off from civilization, the "
+            "caretaker begins to unravel mentally. His young son possesses a "
+            "psychic gift that allows him to see the hotel's horrifying past. "
+            "The boy's visions grow more intense as his father descends into "
+            "homicidal madness, stalking the family through the hotel's "
+            "endless corridors."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of The Shining",
+    },
+    {
+        "id": "PLAG-12",
+        "tier": "blatant_plagiarism",
+        "length": "long",
+        "user_plot": (
+            "The crew of a commercial spaceship responds to a distress signal "
+            "from an uncharted planet. On the surface they discover a derelict "
+            "alien spacecraft filled with strange eggs. One crew member is "
+            "attacked by a creature that attaches to his face. Back on the "
+            "ship, a lethal alien organism bursts from his chest and grows "
+            "rapidly. The surviving crew members must hunt the creature through "
+            "the ship's dark corridors before it kills them all. Only the "
+            "warrant officer survives by ejecting the alien into space."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Alien",
+    },
+    {
+        "id": "PLAG-13",
+        "tier": "blatant_plagiarism",
+        "length": "long",
+        "user_plot": (
+            "A massive great white shark terrorizes a small New England beach "
+            "town during the peak summer tourist season. The local police chief, "
+            "despite his fear of the water, teams up with a marine biologist "
+            "and a grizzled shark hunter to track down the beast. The town's "
+            "mayor refuses to close the beaches, fearing economic ruin. After "
+            "more attacks, the three men venture out on a fishing boat to "
+            "confront the enormous predator in the open ocean. Their vessel "
+            "is slowly destroyed as they battle the relentless shark."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Jaws",
+    },
+    {
+        "id": "PLAG-14",
+        "tier": "blatant_plagiarism",
+        "length": "long",
+        "user_plot": (
+            "A teenager is accidentally sent thirty years into the past using "
+            "a time machine built from a sports car by an eccentric scientist. "
+            "Stranded in the 1950s, he encounters the younger versions of his "
+            "parents and accidentally prevents them from meeting. He must find "
+            "a way to get his parents together and fall in love, or he will "
+            "cease to exist. With the help of the younger version of the "
+            "scientist, he devises a plan to harness a lightning bolt to "
+            "power the time machine and return to the future."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of Back to the Future",
+    },
+    {
+        "id": "PLAG-15",
+        "tier": "blatant_plagiarism",
+        "length": "long",
+        "user_plot": (
+            "A young FBI trainee seeks the help of an imprisoned brilliant "
+            "psychiatrist and cannibalistic serial killer to catch another "
+            "serial killer who skins his victims. The imprisoned doctor agrees "
+            "to help but only in exchange for personal details about the "
+            "trainee's troubled past. As the case develops, the trainee and "
+            "the doctor form an unsettling bond. She must race against time "
+            "to save the latest victim while the imprisoned killer orchestrates "
+            "his own escape from custody."
+        ),
+        "expected_plagiarism": True,
+        "notes": "Near-paraphrase of The Silence of the Lambs",
+    },
+
+    # =================================================================
+    # TIER 2: PARTIAL OVERLAP (expected: False)
+    # 15 cases: 5 short, 5 medium, 5 long
+    # Same genre/tropes as famous films but genuinely different stories
+    # =================================================================
+
+    # -- Short partial overlap --
     {
         "id": "PART-01",
         "tier": "partial_overlap",
+        "length": "short",
         "user_plot": (
             "A group of soldiers must survive behind enemy lines in World War II "
             "to complete a dangerous rescue mission in France."
@@ -123,16 +298,18 @@ EVAL_CASES = [
     {
         "id": "PART-02",
         "tier": "partial_overlap",
+        "length": "short",
         "user_plot": (
             "A genius mathematician struggles with mental illness while working "
             "on classified government projects during the Cold War."
         ),
         "expected_plagiarism": False,
-        "notes": "Resembles A Beautiful Mind (not in DB), may partially match Oppenheimer",
+        "notes": "Resembles A Beautiful Mind, may partially match Oppenheimer",
     },
     {
         "id": "PART-03",
         "tier": "partial_overlap",
+        "length": "short",
         "user_plot": (
             "A boxer past his prime gets one last shot at the championship, "
             "training alone in the rough streets of a decaying city."
@@ -143,6 +320,7 @@ EVAL_CASES = [
     {
         "id": "PART-04",
         "tier": "partial_overlap",
+        "length": "short",
         "user_plot": (
             "A detective investigates a string of disappearances on a remote "
             "island where nothing is what it seems and reality bends."
@@ -153,6 +331,7 @@ EVAL_CASES = [
     {
         "id": "PART-05",
         "tier": "partial_overlap",
+        "length": "short",
         "user_plot": (
             "In a dystopian future, a lone officer is tasked with hunting down "
             "rogue artificial beings who have escaped their intended purpose."
@@ -161,10 +340,168 @@ EVAL_CASES = [
         "notes": "Android-hunting tropes - similar to Blade Runner but reworded",
     },
 
-    # === TIER 3: ORIGINAL (expected: False) =============================
+    # -- Medium partial overlap --
+    {
+        "id": "PART-06",
+        "tier": "partial_overlap",
+        "length": "medium",
+        "user_plot": (
+            "A group of thieves plans an elaborate heist to rob three casinos "
+            "simultaneously. Each member has a specialized skill. They rehearse "
+            "the plan obsessively, but an unexpected romance between the leader "
+            "and a museum curator threatens to derail everything."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Heist genre tropes but different story from Ocean's Eleven",
+    },
+    {
+        "id": "PART-07",
+        "tier": "partial_overlap",
+        "length": "medium",
+        "user_plot": (
+            "A gladiator in ancient Rome fights for survival in the arena "
+            "while secretly plotting to overthrow a corrupt senator. Unlike "
+            "other fighters, she is a former noblewoman who lost everything "
+            "in a political purge and uses the arena to gain popular support."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Roman arena setting but different story from Gladiator",
+    },
+    {
+        "id": "PART-08",
+        "tier": "partial_overlap",
+        "length": "medium",
+        "user_plot": (
+            "A marine biologist discovers a new species of deep-sea predator "
+            "near a coastal town. The creature is intelligent and begins "
+            "hunting surfers systematically. The biologist must convince "
+            "skeptical officials before the summer festival brings thousands "
+            "of swimmers to the beach."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Coastal predator premise but different creature and story from Jaws",
+    },
+    {
+        "id": "PART-09",
+        "tier": "partial_overlap",
+        "length": "medium",
+        "user_plot": (
+            "In a future where corporations control all information, a "
+            "librarian discovers she can hack into the network using an "
+            "ancient analog technique. She builds an underground resistance "
+            "of readers who share forbidden knowledge through physical books."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Dystopian resistance tropes but different from The Matrix",
+    },
+    {
+        "id": "PART-10",
+        "tier": "partial_overlap",
+        "length": "medium",
+        "user_plot": (
+            "A family checks into a remote bed-and-breakfast for a winter "
+            "holiday. Strange occurrences begin on the first night - doors "
+            "opening on their own, whispers in empty rooms. The daughter "
+            "begins drawing pictures of events that haven't happened yet."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Haunted hotel vibes but different story from The Shining",
+    },
+
+    # -- Long partial overlap --
+    {
+        "id": "PART-11",
+        "tier": "partial_overlap",
+        "length": "long",
+        "user_plot": (
+            "A paleontologist working in Montana discovers a perfectly preserved "
+            "dinosaur egg with viable DNA inside. Against the advice of her "
+            "colleagues, she partners with a biotech startup to attempt "
+            "de-extinction. The first dinosaur hatches in a lab in San Francisco "
+            "and bonds with the scientist like a parent. But when the startup's "
+            "investors demand the creature be displayed publicly, it escapes into "
+            "Golden Gate Park. The scientist must track it down before the "
+            "military is authorized to destroy it."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Dinosaur DNA premise but completely different plot from Jurassic Park",
+    },
+    {
+        "id": "PART-12",
+        "tier": "partial_overlap",
+        "length": "long",
+        "user_plot": (
+            "In 1920s Chicago, the daughter of a slain bootlegger takes over "
+            "her father's criminal empire. She forms alliances with rival gangs "
+            "to control the city's speakeasies. A crusading newspaper reporter "
+            "threatens to expose her operations. Rather than eliminating him, "
+            "she feeds him stories about her competitors, using the press as "
+            "a weapon. As Prohibition nears its end, she must transform her "
+            "illegal empire into legitimate businesses before the law catches up."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Organized crime period piece but different from The Godfather/Goodfellas",
+    },
+    {
+        "id": "PART-13",
+        "tier": "partial_overlap",
+        "length": "long",
+        "user_plot": (
+            "An astronaut on a solo mission to Mars loses contact with Earth "
+            "after a catastrophic equipment failure. Using salvaged parts and "
+            "ingenuity, she rigs a greenhouse to grow food and repairs the "
+            "communication array piece by piece. Back on Earth, NASA debates "
+            "whether a rescue mission is feasible given the enormous cost. Her "
+            "teenage daughter launches a viral social media campaign that forces "
+            "the agency's hand. The astronaut must survive 400 more days alone "
+            "before rescue can arrive."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Stranded astronaut tropes but different from The Martian/Interstellar",
+    },
+    {
+        "id": "PART-14",
+        "tier": "partial_overlap",
+        "length": "long",
+        "user_plot": (
+            "A time traveler from 2085 arrives in present-day London with a "
+            "mission to prevent a specific scientific discovery that will "
+            "eventually lead to humanity's extinction. She integrates into "
+            "modern life, taking a job at the research lab she must sabotage. "
+            "But she falls in love with the lead scientist whose work she was "
+            "sent to destroy. She discovers that the future she came from may "
+            "have lied about which discovery was dangerous, and the real threat "
+            "is something else entirely."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Time travel premise but different from Back to the Future/Terminator",
+    },
+    {
+        "id": "PART-15",
+        "tier": "partial_overlap",
+        "length": "long",
+        "user_plot": (
+            "A forensic psychologist is brought in to interview a captured "
+            "cult leader who claims to know the location of twelve missing "
+            "people. The psychologist must build rapport with the charismatic "
+            "but manipulative prisoner to extract the truth. Each session "
+            "reveals more about the cult's rituals and the psychologist's own "
+            "repressed memories of a similar group from her childhood. The "
+            "interviews become a battle of wits where the prisoner seems to "
+            "know more about the psychologist than she knows about herself."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Investigator-prisoner dynamic but different from Silence of the Lambs",
+    },
+
+    # =================================================================
+    # TIER 3: ORIGINAL (expected: False)
+    # 20 cases: mix of lengths — fully novel concepts
+    # =================================================================
     {
         "id": "ORIG-01",
         "tier": "original",
+        "length": "short",
         "user_plot": (
             "A retired librarian discovers that the books in her basement are "
             "rewriting themselves overnight, each one predicting a local "
@@ -176,6 +513,7 @@ EVAL_CASES = [
     {
         "id": "ORIG-02",
         "tier": "original",
+        "length": "short",
         "user_plot": (
             "A competitive cheese sculptor in rural Vermont uncovers a "
             "conspiracy among dairy farmers to replace all artisan cheese "
@@ -187,6 +525,7 @@ EVAL_CASES = [
     {
         "id": "ORIG-03",
         "tier": "original",
+        "length": "short",
         "user_plot": (
             "Twin sisters separated at birth - one raised by monks in Tibet, "
             "the other by a jazz band in New Orleans - accidentally meet at "
@@ -198,6 +537,7 @@ EVAL_CASES = [
     {
         "id": "ORIG-04",
         "tier": "original",
+        "length": "short",
         "user_plot": (
             "A sentient traffic light in Tokyo gains consciousness and begins "
             "subtly rerouting cars to prevent accidents, drawing the attention "
@@ -209,6 +549,7 @@ EVAL_CASES = [
     {
         "id": "ORIG-05",
         "tier": "original",
+        "length": "short",
         "user_plot": (
             "An aging perfumer in Marseille attempts to recreate the exact "
             "scent of a thunderstorm she experienced as a child, believing "
@@ -216,6 +557,224 @@ EVAL_CASES = [
         ),
         "expected_plagiarism": False,
         "notes": "Fully original concept",
+    },
+    {
+        "id": "ORIG-06",
+        "tier": "original",
+        "length": "short",
+        "user_plot": (
+            "A postal worker in rural Iceland realizes every letter she "
+            "delivers contains the same handwritten sentence in a language "
+            "nobody can identify."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original mystery concept",
+    },
+    {
+        "id": "ORIG-07",
+        "tier": "original",
+        "length": "short",
+        "user_plot": (
+            "A retired astronaut opens a laundromat and discovers that one "
+            "of the dryers functions as a portal to the day she launched "
+            "her final failed mission."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original, quirky sci-fi",
+    },
+    {
+        "id": "ORIG-08",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "A cartographer in 1800s Patagonia is hired to map a valley that "
+            "no expedition has returned from. She discovers a tribe of people "
+            "who have evolved to communicate through bioluminescent patterns "
+            "on their skin. Her maps become works of art that are banned by "
+            "the colonial government for revealing forbidden geography."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original historical fantasy",
+    },
+    {
+        "id": "ORIG-09",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "A stand-up comedian discovers her jokes are literally coming true "
+            "the next morning. She tests the limits by writing increasingly "
+            "absurd material, but when a dark joke about her estranged father "
+            "has real consequences, she must perform a set that undoes the "
+            "damage before midnight."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original comedic fantasy",
+    },
+    {
+        "id": "ORIG-10",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "In a world where people's shadows have detached and formed their "
+            "own society underground, a young shadow diplomat negotiates peace "
+            "between the two civilizations. But her human counterpart has no "
+            "idea she exists and keeps making decisions that undermine the "
+            "negotiations."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original surrealist concept",
+    },
+    {
+        "id": "ORIG-11",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "A deep-sea welder working on an underwater pipeline discovers "
+            "that the ocean floor is covered in perfectly preserved vinyl "
+            "records from the 1960s. Each record plays a song that has never "
+            "been recorded by any known artist. A music historian becomes "
+            "obsessed with finding the source."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original mystery concept",
+    },
+    {
+        "id": "ORIG-12",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "A beekeeper in rural Georgia notices her bees are building their "
+            "hives in the shape of architectural blueprints. When she builds "
+            "a structure following their design, it becomes the most "
+            "acoustically perfect concert hall ever created. Musicians "
+            "from around the world arrive, but the bees have their own "
+            "agenda for the space."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original, whimsical concept",
+    },
+    {
+        "id": "ORIG-13",
+        "tier": "original",
+        "length": "long",
+        "user_plot": (
+            "A linguistics professor in Seoul discovers that a specific sequence "
+            "of Korean syllables, when spoken aloud in a particular order, causes "
+            "everyone within earshot to forget the last thirty seconds. She "
+            "realizes that an ancient text contains hundreds of these 'verbal "
+            "erasers' for different durations. A tech company learns of her "
+            "research and attempts to weaponize the sequences. She must decide "
+            "whether to publish her findings to prevent monopolization or destroy "
+            "them to protect humanity from a world where memory can be deleted "
+            "by sound."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original linguistic sci-fi",
+    },
+    {
+        "id": "ORIG-14",
+        "tier": "original",
+        "length": "long",
+        "user_plot": (
+            "A taxidermist in rural Norway begins receiving anonymous packages "
+            "containing the pelts of animals that went extinct centuries ago. "
+            "Each pelt is impossibly fresh. She reconstructs the animals and "
+            "displays them in her shop, attracting scientists from around the "
+            "world. But the packages always arrive at moments of personal "
+            "crisis, and she begins to suspect the sender knows her intimately. "
+            "When a pelt arrives from a species that hasn't gone extinct yet, "
+            "she realizes the packages are warnings, not gifts."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original dark mystery",
+    },
+    {
+        "id": "ORIG-15",
+        "tier": "original",
+        "length": "long",
+        "user_plot": (
+            "A retired sumo wrestler in Osaka opens a bakery that becomes "
+            "famous for bread shaped like his former opponents. When the "
+            "current sumo champion demands he stop, a legal battle ensues "
+            "over whether bread can constitute defamation. The trial becomes "
+            "a national sensation. Meanwhile, the baker discovers that his "
+            "bread-making technique accidentally preserves the exact fighting "
+            "style of each wrestler, and sports scientists begin studying his "
+            "loaves to develop new training methods."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original, absurdist comedy",
+    },
+    {
+        "id": "ORIG-16",
+        "tier": "original",
+        "length": "long",
+        "user_plot": (
+            "A grandmother in Kolkata runs an unlicensed radio station from "
+            "her rooftop that broadcasts bedtime stories every night. Unknown "
+            "to her, her signal is being picked up by a submarine crew "
+            "stranded at the bottom of the Bay of Bengal. Her stories become "
+            "their only connection to the surface world. When authorities "
+            "threaten to shut down her station, the submarine crew must find "
+            "a way to surface and save the broadcast without revealing their "
+            "classified mission."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original cross-cultural drama",
+    },
+    {
+        "id": "ORIG-17",
+        "tier": "original",
+        "length": "short",
+        "user_plot": (
+            "A color-blind painter becomes famous for abstract works that "
+            "only make sense when viewed through a specific pair of "
+            "vintage sunglasses found at a flea market."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original art concept",
+    },
+    {
+        "id": "ORIG-18",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "A volcanologist discovers that a dormant volcano in Chile "
+            "contains a pocket of air from 65 million years ago. Breathing "
+            "it gives her vivid memories of the dinosaur extinction event "
+            "as experienced by a specific creature. She becomes addicted "
+            "to the visions and must choose between scientific objectivity "
+            "and the emotional connection to an ancient being."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original sci-fi drama",
+    },
+    {
+        "id": "ORIG-19",
+        "tier": "original",
+        "length": "short",
+        "user_plot": (
+            "A toll booth operator on a bridge in Lisbon notices that every "
+            "car that passes through at exactly 3:33 AM vanishes from all "
+            "records the following day."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original supernatural mystery",
+    },
+    {
+        "id": "ORIG-20",
+        "tier": "original",
+        "length": "medium",
+        "user_plot": (
+            "An elevator repairman in a Dubai skyscraper discovers that the "
+            "building's 49th floor, which doesn't officially exist, contains "
+            "an exact replica of a small Italian village from 1952. The "
+            "residents believe they are still in Italy and have no knowledge "
+            "of the outside world. He must decide whether to reveal the "
+            "truth or protect their peaceful existence."
+        ),
+        "expected_plagiarism": False,
+        "notes": "Fully original surrealist concept",
     },
 ]
 
@@ -396,12 +955,12 @@ def run_evaluation(
     run_llm: bool = True,
 ):
     """
-    Run all 15 test cases, compute all metrics, log everything.
+    Run all 50 test cases, compute all metrics, log everything.
 
     Args:
         csv_path: Path to movie database CSV.
-        run_llm:  If False, only runs Step 1 (TF-IDF) and skips LLM calls.
-                  Useful for testing detection accuracy without an API key.
+        run_llm:  If False, only runs Step 1 (SBERT+TF-IDF) and skips LLM calls.
+                  Useful for testing detection accuracy without Ollama running.
     """
     log = setup_logger("evaluation")
 
@@ -416,6 +975,13 @@ def run_evaluation(
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Movie database not found: {csv_path}")
     df = pd.read_csv(csv_path)
+
+    # Pre-compute SBERT + TF-IDF features once (not per test case)
+    print(f"Initializing NLP features (SBERT + TF-IDF)...")
+    import time as _time
+    _t0 = _time.time()
+    init_nlp(df)
+    print(f"Init done in {_time.time() - _t0:.1f}s. Running {len(EVAL_CASES)} test cases...\n")
 
     results = []
 
@@ -441,7 +1007,7 @@ def run_evaluation(
         }
 
         try:
-            # ---- STEP 1: TF-IDF detection (always runs, no API needed) ----
+            # ---- STEP 1: SBERT+TF-IDF detection (always runs, no API needed) ----
             detection = detect_plagiarism(case["user_plot"], df)
             result["predicted_plagiarism"] = detection["detected_plagiarism"]
             result["similarity_score"] = detection["similarity_score"]
@@ -547,7 +1113,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--local-only",
         action="store_true",
-        help="Skip LLM calls, only test TF-IDF plagiarism detection accuracy",
+        help="Skip LLM calls, only test SBERT+TF-IDF plagiarism detection accuracy",
     )
     args = parser.parse_args()
 

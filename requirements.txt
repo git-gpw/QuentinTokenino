@@ -6,6 +6,9 @@ numpy>=1.26.4
 scikit-learn>=1.5.0
 pydantic>=2.8.0
 
+# Semantic similarity (sentence embeddings for plagiarism detection):
+sentence-transformers>=3.0.0
+
 # LLM calls (style rewrite + LLM-as-a-Judge — runs locally via Ollama):
 ollama>=0.6.0
 

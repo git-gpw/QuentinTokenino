@@ -3,7 +3,7 @@ app.py - Flask web server for the Cinematic Pipeline.
 
 Serves a single-page UI with two tabs:
     1. ANALYZE  - Paste a plot, get plagiarism check + style rewrite + differentiation tips
-    2. EVALUATE - Run the 15-case test suite and see all metrics in a dashboard
+    2. EVALUATE - Run the 50-case test suite and see all metrics in a dashboard
 
 Endpoints:
     GET  /                  - Serve the HTML UI
@@ -25,7 +25,7 @@ import pandas as pd
 from pipeline import (
     run_pipeline,
     detect_plagiarism,
-    init_tfidf,
+    init_nlp,
     explain_similarity,
     suggest_differentiation,
     OLLAMA_MODEL,
@@ -35,10 +35,10 @@ from schema import PLAGIARISM_THRESHOLD
 
 app = Flask(__name__, static_folder="static")
 
-# Pre-load the database and fit TF-IDF once at startup
+# Pre-load the database and fit all NLP features once at startup
 CSV_PATH = "movies_dataset.csv"
 DF = pd.read_csv(CSV_PATH)
-init_tfidf(DF)
+init_nlp(DF)
 
 
 # -----------------------------------------------------------------------
@@ -160,7 +160,7 @@ def differentiate():
 @app.route("/api/evaluate", methods=["POST"])
 def evaluate():
     """
-    Run the full 15-case evaluation suite.
+    Run the full 50-case evaluation suite.
 
     Expects JSON: {"local_only": bool}  (optional, default false)
     Returns JSON: full evaluation report with all metrics

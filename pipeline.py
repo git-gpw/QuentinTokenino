@@ -5,7 +5,7 @@ WHAT THIS DOES (plain English):
 ================================
 You give it a movie plot idea. It does 4 things:
 
-    1. Checks if your idea is too similar to an existing movie  (local math, no AI)
+    1. Checks if your idea is too similar to an existing movie  (SBERT embeddings, local)
     2. Finds which famous director made the closest matching film (database lookup)
     3. Rewrites your plot in that director's filmmaking style     (Ollama/Gemma3)
     4. Packages everything into validated, structured JSON        (Pydantic)
@@ -18,12 +18,11 @@ PROCESS FLOW:
             |
             v
     +------------------+
-    |  STEP 1:         |   TF-IDF turns plots into word-importance scores.
-    |  Plagiarism      |   Cosine similarity measures overlap.
-    |  Detection       |   Score >= 0.30 --> "too similar" flag.
-    |                  |
-    |  (scikit-learn)  |   NO API calls. NO neural networks.
-    |  (runs locally)  |   Fully deterministic - same input = same output.
+    |  STEP 1:         |   Dual-signal: SBERT (semantic meaning) + TF-IDF
+    |  Plagiarism      |   (vocabulary overlap), combined via geometric mean.
+    |  Detection       |   Score >= threshold --> "too similar" flag.
+    |                  |   Popularity-weighted ranking surfaces famous films.
+    |  (SBERT + TF-IDF)|   NO API calls. Runs locally on CPU.
     +--------+---------+
              |  closest movie + director + similarity score
              v
@@ -63,19 +62,24 @@ A screenwriter or development executive pastes a plot idea. The system:
 
 import os
 import json
+import hashlib
 import logging
+import pickle
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import ollama
 import spacy
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
 from schema import MovieAnalysis, PLAGIARISM_THRESHOLD
 
-# Load spaCy model once at import time (small model, ~12MB)
-_nlp = spacy.load("en_core_web_sm")
+# Load models once at import time
+_nlp = spacy.load("en_core_web_sm")         # NER + noun chunks (~12MB)
+_SBERT = SentenceTransformer("all-MiniLM-L6-v2")  # Semantic embeddings (~80MB)
 
 # Which Ollama model to use for the style rewrite.
 # Change this if you pull a different model (e.g. "llama3", "mistral").
@@ -133,86 +137,200 @@ def cleanup_logger(logger: logging.Logger):
 # STEP 1: Plagiarism Detection (deterministic, local, no API)
 # -----------------------------------------------------------------------
 
-def prefit_tfidf(df: pd.DataFrame):
-    """
-    Fit the TF-IDF vectorizer on the movie database once and cache results.
+# ---- Scoring config ----
+# Dual-signal approach: SBERT captures semantic meaning (paraphrases),
+# TF-IDF captures vocabulary overlap (distinguishes genre similarity from
+# actual plagiarism). Combined via geometric mean: sqrt(sbert * tfidf).
+# This requires BOTH signals to be high for a high combined score.
+POPULARITY_BOOST = 0.15  # max boost for ranking (not for threshold decision)
 
-    This is called once at startup. Per-request, only the user's plot
-    needs to be transformed — the DB matrix is reused.
 
-    Returns:
-        Tuple of (vectorizer, db_matrix) to be stored at module level.
+def _precompute_embeddings(df: pd.DataFrame) -> np.ndarray:
     """
+    Encode all movie plots into 384-dim sentence embeddings using SBERT.
+
+    Called once at startup. Returns an (N, 384) float32 matrix.
+    ~2-3 minutes for 16k plots on CPU, cached to disk afterward.
+    """
+    plots = df["plot"].tolist()
+    embeddings = _SBERT.encode(plots, batch_size=256, show_progress_bar=True,
+                               normalize_embeddings=True)
+    return embeddings
+
+
+def _prefit_tfidf(df: pd.DataFrame):
+    """Fit TF-IDF vectorizer on movie plots and return (vectorizer, matrix)."""
     vectorizer = TfidfVectorizer(stop_words="english")
     db_matrix = vectorizer.fit_transform(df["plot"].tolist())
     return vectorizer, db_matrix
 
 
-# Module-level cache — populated by app.py at startup via init_tfidf()
-_VECTORIZER = None
-_DB_MATRIX = None
+# Module-level cache — populated by app.py at startup via init_nlp()
+_DB_EMBEDDINGS = None
+_TFIDF_VECTORIZER = None
+_TFIDF_MATRIX = None
+_DB_POPULARITY = None
+
+# Disk cache location
+_NLP_CACHE_PATH = "nlp_cache.pkl"
 
 
-def init_tfidf(df: pd.DataFrame):
-    """Fit and cache the TF-IDF vectorizer + DB matrix. Call once at startup."""
-    global _VECTORIZER, _DB_MATRIX
-    _VECTORIZER, _DB_MATRIX = prefit_tfidf(df)
+def _csv_hash(df: pd.DataFrame) -> str:
+    """Fast hash of DataFrame content to detect dataset changes."""
+    content = "".join(df["plot"].tolist()).encode("utf-8")
+    return hashlib.sha256(content).hexdigest()[:16]
+
+
+def _load_cache(expected_hash: str):
+    """Load cached NLP features from disk if hash matches."""
+    if not os.path.exists(_NLP_CACHE_PATH):
+        return None
+    try:
+        with open(_NLP_CACHE_PATH, "rb") as f:
+            cache = pickle.load(f)
+        if cache.get("hash") == expected_hash:
+            return cache
+        else:
+            print(f"  NLP cache hash mismatch — dataset changed, will recompute")
+    except (pickle.UnpicklingError, EOFError, KeyError) as e:
+        print(f"  WARNING: NLP cache file is corrupted ({type(e).__name__}), will recompute")
+    return None
+
+
+def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix):
+    """Save NLP features to disk for fast subsequent startups.
+
+    Writes to a temp file first, then renames atomically to avoid
+    leaving a corrupted cache if the process is interrupted mid-write.
+    """
+    cache = {
+        "hash": data_hash,
+        "embeddings": embeddings,
+        "tfidf_vectorizer": tfidf_vectorizer,
+        "tfidf_matrix": tfidf_matrix,
+    }
+    tmp_path = _NLP_CACHE_PATH + ".tmp"
+    with open(tmp_path, "wb") as f:
+        pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp_path, _NLP_CACHE_PATH)
+
+
+def init_nlp(df: pd.DataFrame):
+    """
+    Compute and cache all NLP features for the movie database. Call once at startup.
+
+    On first run, encodes all plots with SBERT + TF-IDF and saves to
+    nlp_cache.pkl (~3 min). On subsequent runs, loads from cache in
+    ~2 seconds if the dataset hasn't changed (SHA-256 hash check).
+
+    Caches:
+        - SBERT embeddings (384-dim per movie, semantic similarity)
+        - TF-IDF vectorizer + matrix (vocabulary overlap)
+        - Popularity scores (for ranking boost)
+    """
+    global _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_POPULARITY
+
+    data_hash = _csv_hash(df)
+    cache = _load_cache(data_hash)
+
+    if cache is not None:
+        print(f"  NLP cache hit ({_NLP_CACHE_PATH}) — loading pre-computed features")
+        _DB_EMBEDDINGS = cache["embeddings"]
+        _TFIDF_VECTORIZER = cache["tfidf_vectorizer"]
+        _TFIDF_MATRIX = cache["tfidf_matrix"]
+    else:
+        print(f"  NLP cache miss — encoding {len(df)} movies with SBERT + TF-IDF...")
+        _DB_EMBEDDINGS = _precompute_embeddings(df)
+        _TFIDF_VECTORIZER, _TFIDF_MATRIX = _prefit_tfidf(df)
+        _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX)
+        print(f"  NLP features cached to {_NLP_CACHE_PATH}")
+
+    if "popularity" in df.columns:
+        _DB_POPULARITY = df["popularity"].values
+    else:
+        _DB_POPULARITY = None
+
+
+# Keep backward compat alias
+init_tfidf = init_nlp
 
 
 def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     """
-    Compare the user's plot against every movie in the database using TF-IDF.
+    Compare the user's plot against every movie in the database using
+    dual-signal similarity: SBERT (semantic) + TF-IDF (vocabulary).
 
-    HOW TF-IDF WORKS (plain English):
-        - Each plot becomes a list of word-importance scores.
-        - Common filler words ("the", "a", "is") get near-zero scores.
-        - Distinctive words ("cyborg", "heist", "wormhole") get high scores.
-        - Cosine similarity then measures how much two plots share
-          those distinctive words.
-        - 1.0 = identical wording.  0.0 = nothing in common.
+    WHY TWO SIGNALS:
+        - SBERT alone catches paraphrases but can't distinguish "same story"
+          from "same genre" — both score high semantically.
+        - TF-IDF alone misses paraphrases that use different words.
+        - Combined via geometric mean: sqrt(sbert * tfidf). This requires
+          BOTH signals to be high, naturally filtering genre overlap while
+          catching true paraphrases.
 
-    If init_tfidf() was called at startup, uses the cached vectorizer
-    and DB matrix for fast per-request transforms. Otherwise falls back
-    to fitting from scratch (for standalone / evaluation use).
+    POPULARITY RANKING:
+        When two movies score similarly, the more famous one ranks higher.
+        Popularity affects *which* movie is shown, NOT the plagiarism decision.
 
     Args:
         user_plot: The user's free-text plot description.
-        df:        DataFrame with at least columns: title, director, plot.
+        df:        DataFrame with columns: title, director, plot, [popularity].
 
     Returns:
         dict with:
-            matched_movie      - title of the closest film
+            matched_movie       - title of the closest film
             assigned_director   - that film's director
-            similarity_score    - cosine similarity (0.0 - 1.0)
+            similarity_score    - geometric mean of SBERT + TF-IDF (0.0 - 1.0)
             detected_plagiarism - True if score >= PLAGIARISM_THRESHOLD
             top_matches         - list of top 5 matches for transparency
     """
-    if _VECTORIZER is not None and _DB_MATRIX is not None:
-        # Fast path: reuse pre-fitted vectorizer
-        user_vector = _VECTORIZER.transform([user_plot])
-        db_vectors = _DB_MATRIX
+    # ---- Signal 1: SBERT semantic similarity ----
+    if _DB_EMBEDDINGS is not None:
+        user_emb = _SBERT.encode([user_plot], normalize_embeddings=True)
+        sbert_scores = sklearn_cosine(user_emb, _DB_EMBEDDINGS).flatten()
     else:
-        # Fallback: fit from scratch (standalone use)
-        db_plots = df["plot"].tolist()
-        vectorizer = TfidfVectorizer(stop_words="english")
-        tfidf_matrix = vectorizer.fit_transform(db_plots + [user_plot])
-        user_vector = tfidf_matrix[-1]
-        db_vectors = tfidf_matrix[:-1]
+        all_plots = df["plot"].tolist() + [user_plot]
+        all_emb = _SBERT.encode(all_plots, normalize_embeddings=True)
+        sbert_scores = sklearn_cosine(all_emb[-1:], all_emb[:-1]).flatten()
 
-    scores = sklearn_cosine(user_vector, db_vectors).flatten()
+    # ---- Signal 2: TF-IDF vocabulary overlap ----
+    if _TFIDF_VECTORIZER is not None and _TFIDF_MATRIX is not None:
+        user_vec = _TFIDF_VECTORIZER.transform([user_plot])
+        tfidf_scores = sklearn_cosine(user_vec, _TFIDF_MATRIX).flatten()
+    else:
+        plots = df["plot"].tolist()
+        vec = TfidfVectorizer(stop_words="english")
+        db_matrix = vec.fit_transform(plots)
+        user_vec = vec.transform([user_plot])
+        tfidf_scores = sklearn_cosine(user_vec, db_matrix).flatten()
 
-    # Best match
-    best_idx = int(scores.argmax())
-    best_score = float(scores[best_idx])
+    # ---- Geometric mean: requires BOTH signals to be high ----
+    # Clamp negatives to 0 before sqrt (rare but possible with SBERT)
+    sbert_clamped = np.maximum(sbert_scores, 0)
+    tfidf_clamped = np.maximum(tfidf_scores, 0)
+    combined_scores = np.sqrt(sbert_clamped * tfidf_clamped)
 
-    # Top 5 for transparency logging
-    top5_idx = scores.argsort()[-5:][::-1]
+    # ---- Popularity-boosted ranking score ----
+    if _DB_POPULARITY is not None:
+        ranking_scores = combined_scores * (1 + POPULARITY_BOOST * _DB_POPULARITY)
+    elif "popularity" in df.columns:
+        ranking_scores = combined_scores * (1 + POPULARITY_BOOST * df["popularity"].values)
+    else:
+        ranking_scores = combined_scores
+
+    # Best match by ranking score (popularity-aware)
+    best_idx = int(ranking_scores.argmax())
+    # Use combined score (without popularity) for plagiarism decision
+    best_score = float(combined_scores[best_idx])
+
+    # Top 5 by ranking score
+    top5_idx = ranking_scores.argsort()[-5:][::-1]
     top_matches = [
         {
             "rank": rank,
             "title": df.iloc[idx]["title"],
             "director": df.iloc[idx]["director"],
-            "score": round(float(scores[idx]), 4),
+            "score": round(float(combined_scores[idx]), 4),
         }
         for rank, idx in enumerate(top5_idx, 1)
     ]
@@ -254,7 +372,7 @@ def rewrite_in_director_style(
 USER'S ORIGINAL PLOT:
 "{user_plot}"
 
-PLAGIARISM DETECTION RESULTS (computed deterministically by TF-IDF — do NOT change these):
+PLAGIARISM DETECTION RESULTS (computed deterministically — do NOT change these):
 - Closest match: "{matched_movie}"
 - Director: {assigned_director}
 - Similarity score: {similarity_score}
@@ -332,7 +450,7 @@ def run_pipeline(
         log:        Optional logger. If None, a new one is created.
         df:         Optional pre-loaded DataFrame. Avoids re-reading CSV.
         detection:  Optional pre-computed detection result from detect_plagiarism().
-                    Avoids running TF-IDF twice when the caller already has it.
+                    Avoids running detection twice when the caller already has it.
 
     Returns:
         Validated MovieAnalysis object.
@@ -358,7 +476,7 @@ def run_pipeline(
 
         # -- STEP 1: Plagiarism detection (local) --
         log.info("-" * 50)
-        log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
+        log.info("STEP 1: SBERT Plagiarism Detection (local)")
         if detection is None:
             detection = detect_plagiarism(user_plot, df)
 
@@ -515,7 +633,7 @@ PLOT A (user's idea):
 PLOT B ("{matched_movie}" — an existing film):
 "{matched_plot}"
 
-These plots are {similarity_score:.0%} similar according to TF-IDF text analysis.
+These plots are {similarity_score:.0%} similar according to SBERT + TF-IDF analysis.
 
 {ner_context}
 YOUR TASK:

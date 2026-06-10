@@ -29,8 +29,12 @@ logs/
 # Embeddings (legacy, no longer used in v0.2)
 *.npy
 
+# NLP feature cache (rebuilt on startup if dataset changes)
+nlp_cache.pkl
+
 # Large data files (downloaded, not committed)
 imdb_*.tsv.gz
+title.ratings.tsv.gz
 MovieSummaries/
 moviesum_light.csv
 movies_dataset_v1_backup.csv
