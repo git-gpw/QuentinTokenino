@@ -132,22 +132,58 @@
             padding: 1.5rem;
             margin-bottom: 1.2rem;
             border: 1px solid #222;
+            transition: opacity 0.4s ease, transform 0.4s ease;
         }
-        .verdict-card.plagiarism {
-            background: linear-gradient(135deg, #2d1117 0%, #1a0a0e 100%);
-            border-color: #e94560;
-        }
-        .verdict-card.original {
+        .verdict-card.highly_original {
             background: linear-gradient(135deg, #0d2818 0%, #0a1a10 100%);
             border-color: #2ecc71;
+        }
+        .verdict-card.minor_similarities {
+            background: linear-gradient(135deg, #0d2821 0%, #0a1a15 100%);
+            border-color: #1abc9c;
+        }
+        .verdict-card.notable_similarities {
+            background: linear-gradient(135deg, #2d2011 0%, #1a150a 100%);
+            border-color: #f39c12;
+        }
+        .verdict-card.strongly_similar {
+            background: linear-gradient(135deg, #2d1a0e 0%, #1a100a 100%);
+            border-color: #e67e22;
+        }
+        .verdict-card.near_identical {
+            background: linear-gradient(135deg, #2d1117 0%, #1a0a0e 100%);
+            border-color: #e94560;
         }
         .verdict-label {
             font-size: 1.3rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
-        .verdict-card.plagiarism .verdict-label { color: #e94560; }
-        .verdict-card.original .verdict-label { color: #2ecc71; }
+        .quip {
+            font-style: italic;
+            font-size: 1.05rem;
+            color: #ccc;
+            margin: 0.8rem 0;
+            padding: 0.6rem 1rem;
+            border-left: 3px solid;
+            border-color: inherit;
+            opacity: 0.9;
+        }
+        .shared-elements-line {
+            font-size: 0.82rem;
+            color: #888;
+            margin-top: 0.5rem;
+        }
+        .shared-elements-line strong { color: #aaa; }
+
+        /* Fade-in animation for progressive rendering */
+        .fade-in {
+            animation: fadeSlideIn 0.4s ease forwards;
+        }
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
 
         .score-bar-container {
             background: #1a1a2e;
@@ -507,7 +543,7 @@
 
         <!-- Loading -->
         <div class="loading-msg" id="analyze-loading">
-            <span class="spinner"></span> Running pipeline... (TF-IDF detection + LLM rewrite, ~30 seconds)
+            <span class="spinner"></span><span> Checking for plagiarism...</span>
         </div>
 
         <!-- Error Banner -->
@@ -518,10 +554,11 @@
 
         <!-- Results -->
         <div class="results" id="results">
-            <!-- Verdict -->
-            <div class="verdict-card" id="verdict-card">
+            <!-- Verdict (shown after detection — instant) -->
+            <div class="verdict-card" id="verdict-card" style="display:none;">
                 <div class="verdict-label" id="verdict-label"></div>
                 <div id="verdict-detail" style="color:#aaa; font-size:0.9rem;"></div>
+                <div class="quip" id="verdict-quip"></div>
                 <div class="score-bar-container">
                     <div class="score-bar" id="score-bar"></div>
                     <div class="threshold-line" id="threshold-line"></div>
@@ -531,37 +568,41 @@
                     <span id="threshold-label"></span>
                     <span>100% identical</span>
                 </div>
+                <div class="shared-elements-line" id="shared-elements-line" style="display:none;"></div>
             </div>
 
-            <!-- Top Matches -->
-            <div class="detail-card">
+            <!-- Top Matches (shown after detection) -->
+            <div class="detail-card" id="matches-card" style="display:none;">
                 <h3>Top Matches</h3>
                 <div class="top-matches" id="top-matches"></div>
             </div>
 
-            <!-- Most Similar Aspects -->
+            <!-- Rewritten Plot (shown after rewrite — LLM step) -->
+            <div class="detail-card" id="rewrite-card" style="display:none;">
+                <h3>Your Plot in <span id="director-name"></span>'s Style</h3>
+                <div class="loading-msg visible" id="rewrite-loading">
+                    <span class="spinner"></span> <span id="rewrite-loading-text">Rewriting in director's style...</span>
+                </div>
+                <div id="rewrite-content" style="display:none;">
+                    <div class="content" id="rewritten-plot"></div>
+                    <div style="margin-top:1rem; padding-top:0.8rem; border-top:1px solid #222;">
+                        <h3 style="margin-bottom:0.5rem;">Stylistic Notes</h3>
+                        <p id="stylistic-notes"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Most Similar Aspects (shown after similarity — NER + LLM step) -->
             <div class="detail-card" id="similarity-section" style="display:none;">
                 <h3>Most Similar Aspects</h3>
                 <p style="font-size:0.8rem; color:#666; margin-bottom:0.7rem;">
                     spaCy NER (deterministic) + Ollama (thematic analysis)
                 </p>
-                <div class="loading-msg" id="similarity-loading">
-                    <span class="spinner"></span> Analyzing similarity with spaCy + Ollama...
+                <div class="loading-msg visible" id="similarity-loading">
+                    <span class="spinner"></span> Analyzing similarity patterns...
                 </div>
                 <div id="shared-entities"></div>
                 <div id="similarity-aspects"></div>
-            </div>
-
-            <!-- Rewritten Plot -->
-            <div class="detail-card">
-                <h3>Your Plot in <span id="director-name"></span>'s Style</h3>
-                <div class="content" id="rewritten-plot"></div>
-            </div>
-
-            <!-- Stylistic Notes -->
-            <div class="detail-card">
-                <h3>Stylistic Notes</h3>
-                <p id="stylistic-notes"></p>
             </div>
 
             <!-- Differentiation Strategies -->
@@ -788,9 +829,11 @@
             </tr></thead><tbody>`;
 
         for (const h of history) {
-            const badge = h.plagiarism
-                ? '<span class="badge badge-plag">PLAG</span>'
-                : '<span class="badge badge-orig">ORIG</span>';
+            const badge = h.category_label
+                ? `<span class="badge" style="background:#1a1a2e;color:#ccc;font-size:0.7rem;">${h.category_label}</span>`
+                : (h.plagiarism
+                    ? '<span class="badge badge-plag">PLAG</span>'
+                    : '<span class="badge badge-orig">ORIG</span>');
             const time = new Date(h.timestamp).toLocaleString([], {
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
             });
@@ -845,173 +888,246 @@
         document.getElementById(bannerId).classList.remove('visible');
     }
 
-    // ── Analyze ─────────────────────────────────────
-    let flowTimers = [];
+    // ── Analyze (SSE streaming) ───────────────────────
     async function analyzePlot() {
         const plot = document.getElementById('plot-input').value.trim();
         if (!plot) return;
 
         const btn = document.getElementById('analyze-btn');
         btn.disabled = true;
+
+        // Reset UI
         document.getElementById('results').classList.remove('visible');
         document.getElementById('analyze-error').classList.remove('visible');
-        document.getElementById('analyze-loading').classList.add('visible');
+        const loadingEl = document.getElementById('analyze-loading');
+        const loadingText = loadingEl.querySelector('span:last-child') || loadingEl;
+        loadingEl.classList.add('visible');
+        loadingText.textContent = ' Checking for plagiarism...';
         setFlowStep(1);
 
-        // Animate steps (approximate timing) — track so we can cancel on error
-        flowTimers.forEach(t => clearTimeout(t));
-        flowTimers = [
-            setTimeout(() => setFlowStep(2), 500),
-            setTimeout(() => setFlowStep(3), 1500),
-        ];
+        // Hide progressive sections
+        document.getElementById('verdict-card').style.display = 'none';
+        document.getElementById('matches-card').style.display = 'none';
+        document.getElementById('rewrite-card').style.display = 'none';
+        document.getElementById('similarity-section').style.display = 'none';
+        document.getElementById('diff-section').style.display = 'none';
 
         try {
-            const res = await fetch('/api/analyze', {
+            const res = await fetch('/api/analyze-stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plot }),
             });
-            const data = await res.json();
 
-            if (!res.ok) throw new Error(data.error || 'Server error');
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Server error');
+            }
 
-            setFlowStep(4);
-            setTimeout(() => {
-                for (let i = 1; i <= 4; i++) {
-                    document.getElementById('step-' + i).classList.remove('active');
-                    document.getElementById('step-' + i).classList.add('done');
+            document.getElementById('results').classList.add('visible');
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop(); // keep incomplete event
+
+                for (const part of parts) {
+                    // Parse SSE: "event: <type>\ndata: <json>"
+                    const lines = part.split('\n');
+                    let eventType = '', eventData = '';
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) eventType = line.slice(7);
+                        if (line.startsWith('data: ')) eventData = line.slice(6);
+                    }
+                    if (!eventType || !eventData) continue;
+
+                    const data = JSON.parse(eventData);
+
+                    if (eventType === 'detection') {
+                        renderDetection(data, plot);
+                        // Update loading for next step
+                        const dir = data.detection.assigned_director;
+                        loadingText.textContent = ` Rewriting in ${dir}'s style...`;
+                        setFlowStep(2);
+                        setTimeout(() => setFlowStep(3), 300);
+                    }
+                    else if (eventType === 'rewrite') {
+                        renderRewrite(data);
+                        loadingText.textContent = ' Analyzing similarity patterns...';
+                        setFlowStep(4);
+                    }
+                    else if (eventType === 'similarity') {
+                        renderSimilarity(data);
+                    }
+                    else if (eventType === 'complete') {
+                        // All steps done
+                        for (let i = 1; i <= 4; i++) {
+                            document.getElementById('step-' + i).classList.remove('active');
+                            document.getElementById('step-' + i).classList.add('done');
+                        }
+                    }
+                    else if (eventType === 'error') {
+                        throw new Error(data.error);
+                    }
                 }
-            }, 400);
-
-            lastAnalysis = { ...data.result, plot, top_matches: data.top_matches, threshold: data.threshold };
-            renderResults(data);
-
-            // Save to search history
-            addToHistory({
-                timestamp: new Date().toISOString(),
-                plot: plot,
-                plagiarism: data.result.detected_plagiarism,
-                score: data.result.similarity_score,
-                matched_movie: data.result.matched_movie,
-                director: data.result.assigned_director,
-            });
-
+            }
         } catch (err) {
-            flowTimers.forEach(t => clearTimeout(t));
-            flowTimers = [];
             showError('analyze-error', err.message);
             clearFlow();
         } finally {
             btn.disabled = false;
-            document.getElementById('analyze-loading').classList.remove('visible');
+            loadingEl.classList.remove('visible');
             setRandomPlaceholder();
         }
     }
 
-    function renderResults(data) {
-        const r = data.result;
+    // ── Progressive render: Detection (instant) ─────
+    function renderDetection(data, plot) {
+        const det = data.detection;
+        const cat = det.category;
         const card = document.getElementById('verdict-card');
-        const isPlag = r.detected_plagiarism;
 
-        card.className = 'verdict-card ' + (isPlag ? 'plagiarism' : 'original');
-        document.getElementById('verdict-label').textContent =
-            isPlag ? 'Plagiarism Detected' : 'Original Plot';
+        // Category-based styling
+        card.className = 'verdict-card fade-in ' + cat.id;
+        const label = document.getElementById('verdict-label');
+        label.textContent = cat.label;
+        label.style.color = cat.color;
+
         document.getElementById('verdict-detail').textContent =
-            `Closest match: "${r.matched_movie}" by ${r.assigned_director} (${(r.similarity_score * 100).toFixed(1)}% similar)`;
+            `${(det.similarity_score * 100).toFixed(1)}% similar to "${det.matched_movie}" by ${det.assigned_director}`;
+
+        // Quip
+        const quipEl = document.getElementById('verdict-quip');
+        quipEl.textContent = det.quip;
+        quipEl.style.borderColor = cat.color;
+
+        // Shared elements
+        const elemLine = document.getElementById('shared-elements-line');
+        if (det.shared_elements && det.shared_elements.length > 0) {
+            elemLine.innerHTML = 'Shared elements: <strong>' + det.shared_elements.join('</strong>, <strong>') + '</strong>';
+            elemLine.style.display = 'block';
+        } else {
+            elemLine.style.display = 'none';
+        }
 
         // Score bar
-        const pct = Math.min(r.similarity_score * 100, 100);
+        const pct = Math.min(det.similarity_score * 100, 100);
         const bar = document.getElementById('score-bar');
         bar.style.width = pct + '%';
-        bar.className = 'score-bar ' + (pct >= 30 ? 'high' : pct >= 15 ? 'medium' : 'low');
+        bar.className = 'score-bar ' + (pct >= 35 ? 'high' : pct >= 15 ? 'medium' : 'low');
 
         const threshPct = data.threshold * 100;
         document.getElementById('threshold-line').style.left = threshPct + '%';
         document.getElementById('threshold-label').textContent = 'Threshold: ' + threshPct + '%';
 
+        card.style.display = '';
+
         // Top matches
         const matchesEl = document.getElementById('top-matches');
-        matchesEl.innerHTML = data.top_matches.map(m =>
+        matchesEl.innerHTML = det.top_matches.map(m =>
             `<div class="match-chip">
                 <span class="score">${(m.score * 100).toFixed(0)}%</span>
                 <div class="title">${m.title}</div>
                 <div class="director">${m.director}</div>
             </div>`
         ).join('');
+        const matchesCard = document.getElementById('matches-card');
+        matchesCard.className = 'detail-card fade-in';
+        matchesCard.style.display = '';
 
-        // Rewrite
-        document.getElementById('director-name').textContent = r.assigned_director;
-        document.getElementById('rewritten-plot').textContent = r.rewritten_plot;
-        document.getElementById('stylistic-notes').textContent = r.stylistic_notes;
+        // Show rewrite + similarity cards with loading spinners
+        const rewriteCard = document.getElementById('rewrite-card');
+        document.getElementById('director-name').textContent = det.assigned_director;
+        document.getElementById('rewrite-loading-text').textContent =
+            `Rewriting in ${det.assigned_director}'s style...`;
+        document.getElementById('rewrite-loading').classList.add('visible');
+        document.getElementById('rewrite-content').style.display = 'none';
+        rewriteCard.className = 'detail-card fade-in';
+        rewriteCard.style.display = '';
 
-        // Differentiation section - always show, more useful when flagged
-        const diffSection = document.getElementById('diff-section');
-        diffSection.style.display = 'block';
-        document.getElementById('strategies').innerHTML = '';
-        document.getElementById('diff-btn').style.display = 'inline-block';
-        document.getElementById('diff-loading').classList.remove('visible');
-
-        document.getElementById('results').classList.add('visible');
-
-        // Auto-fetch similarity explanation in the background
-        getSimilarity();
-    }
-
-    // ── Similarity Explanation ──────────────────────
-    async function getSimilarity() {
-        if (!lastAnalysis) return;
-
-        const section = document.getElementById('similarity-section');
-        section.style.display = 'block';
+        const simSection = document.getElementById('similarity-section');
         document.getElementById('similarity-loading').classList.add('visible');
         document.getElementById('shared-entities').innerHTML = '';
         document.getElementById('similarity-aspects').innerHTML = '';
+        simSection.className = 'detail-card fade-in';
+        simSection.style.display = '';
 
-        try {
-            const res = await fetch('/api/similarity', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    plot: lastAnalysis.plot,
-                    matched_movie: lastAnalysis.matched_movie,
-                    similarity_score: lastAnalysis.similarity_score,
-                }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
+        // Save for later use (differentiation, history)
+        lastAnalysis = {
+            plot: plot,
+            matched_movie: det.matched_movie,
+            assigned_director: det.assigned_director,
+            similarity_score: det.similarity_score,
+            detected_plagiarism: det.detected_plagiarism,
+            category: cat,
+        };
 
-            // Render shared entities (NER)
-            const entEl = document.getElementById('shared-entities');
-            if (data.shared_entities && data.shared_entities.length > 0) {
-                entEl.innerHTML =
-                    '<div style="font-size:0.78rem; color:#888; margin-bottom:0.4rem;">Shared entities found by spaCy NER:</div>' +
-                    '<div class="entity-chips">' +
-                    data.shared_entities.map(e =>
-                        `<span class="entity-chip">${e.entity}<span class="etype">${e.type}</span></span>`
-                    ).join('') +
-                    '</div>';
-            } else {
-                entEl.innerHTML = '<div style="font-size:0.8rem; color:#666; margin-bottom:0.5rem;">No shared named entities detected (similarity is thematic, not name-based).</div>';
-            }
+        // Save to search history
+        addToHistory({
+            timestamp: new Date().toISOString(),
+            plot: plot,
+            plagiarism: det.detected_plagiarism,
+            score: det.similarity_score,
+            matched_movie: det.matched_movie,
+            director: det.assigned_director,
+            category_label: cat.label,
+        });
+    }
 
-            // Render LLM aspects
-            const aspEl = document.getElementById('similarity-aspects');
-            aspEl.innerHTML = (data.aspects || []).map(a => {
-                const name = a.aspect || a.name || a.label || '';
-                const desc = a.explanation || a.description || a.detail || '';
-                if (!name && !desc) return '';
-                return `<div class="aspect-item">
-                    <div class="name">${name}</div>
-                    <div class="desc">${desc}</div>
-                </div>`;
-            }).join('');
+    // ── Progressive render: Rewrite (LLM result) ────
+    function renderRewrite(data) {
+        const r = data.result;
+        document.getElementById('rewritten-plot').textContent = r.rewritten_plot;
+        document.getElementById('stylistic-notes').textContent = r.stylistic_notes;
 
-        } catch (err) {
-            document.getElementById('similarity-aspects').innerHTML =
-                `<div style="color:#e94560; font-size:0.85rem;">Error: ${err.message}</div>`;
-        } finally {
-            document.getElementById('similarity-loading').classList.remove('visible');
+        document.getElementById('rewrite-loading').classList.remove('visible');
+        document.getElementById('rewrite-content').style.display = '';
+
+        // Show differentiation section
+        const diffSection = document.getElementById('diff-section');
+        diffSection.style.display = 'block';
+        diffSection.className = 'detail-card fade-in';
+        document.getElementById('strategies').innerHTML = '';
+        document.getElementById('diff-btn').style.display = 'inline-block';
+        document.getElementById('diff-loading').classList.remove('visible');
+    }
+
+    // ── Progressive render: Similarity (NER + LLM) ──
+    function renderSimilarity(data) {
+        // Render shared entities (NER)
+        const entEl = document.getElementById('shared-entities');
+        if (data.shared_entities && data.shared_entities.length > 0) {
+            entEl.innerHTML =
+                '<div style="font-size:0.78rem; color:#888; margin-bottom:0.4rem;">Shared entities found by spaCy NER:</div>' +
+                '<div class="entity-chips">' +
+                data.shared_entities.map(e =>
+                    `<span class="entity-chip">${e.entity}<span class="etype">${e.type}</span></span>`
+                ).join('') +
+                '</div>';
+        } else {
+            entEl.innerHTML = '<div style="font-size:0.8rem; color:#666; margin-bottom:0.5rem;">No shared named entities detected (similarity is thematic, not name-based).</div>';
         }
+
+        // Render LLM aspects
+        const aspEl = document.getElementById('similarity-aspects');
+        aspEl.innerHTML = (data.aspects || []).map(a => {
+            const name = a.aspect || a.name || a.label || '';
+            const desc = a.explanation || a.description || a.detail || '';
+            if (!name && !desc) return '';
+            return `<div class="aspect-item">
+                <div class="name">${name}</div>
+                <div class="desc">${desc}</div>
+            </div>`;
+        }).join('');
+
+        document.getElementById('similarity-loading').classList.remove('visible');
     }
 
     // ── Differentiation ─────────────────────────────

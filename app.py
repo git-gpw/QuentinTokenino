@@ -17,9 +17,10 @@ Start:
     Then open http://localhost:8080
 """
 
+import json
 import traceback
 
-from flask import Flask, send_from_directory, request, jsonify
+from flask import Flask, Response, send_from_directory, request, jsonify, stream_with_context
 import pandas as pd
 
 from pipeline import (
@@ -28,6 +29,8 @@ from pipeline import (
     init_nlp,
     explain_similarity,
     suggest_differentiation,
+    rewrite_in_director_style,
+    validate_output,
     OLLAMA_MODEL,
 )
 from evaluation import run_evaluation, EVAL_CASES
@@ -83,6 +86,83 @@ def analyze():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/analyze-stream", methods=["POST"])
+def analyze_stream():
+    """
+    Streaming version of /api/analyze using Server-Sent Events.
+
+    Sends results progressively as each pipeline step completes:
+        1. detection  — instant (~10ms): score, category, quip, top matches
+        2. rewrite    — LLM call (~15-30s): director-style rewrite + notes
+        3. similarity — NER + LLM (~15-30s): shared entities + thematic aspects
+        4. complete   — signals end of stream
+
+    The UI renders each section as its data arrives, so the user sees
+    the verdict immediately instead of waiting 30-60s for everything.
+    """
+    data = request.get_json()
+    plot = (data or {}).get("plot", "").strip()
+
+    if not plot:
+        return jsonify({"error": "Please enter a plot description."}), 400
+
+    def sse(event_type, payload):
+        return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+    def generate():
+        try:
+            # ── Step 1: Detection (instant, ~10ms) ──
+            detection = detect_plagiarism(plot, DF)
+
+            yield sse("detection", {
+                "detection": detection,
+                "threshold": PLAGIARISM_THRESHOLD,
+            })
+
+            # ── Step 2: Style Rewrite (LLM, ~15-30s) ──
+            raw_json = rewrite_in_director_style(
+                user_plot=plot,
+                matched_movie=detection["matched_movie"],
+                assigned_director=detection["assigned_director"],
+                similarity_score=detection["similarity_score"],
+                detected_plagiarism=detection["detected_plagiarism"],
+            )
+            result = validate_output(raw_json)
+
+            yield sse("rewrite", {
+                "result": result.model_dump(),
+                "model": OLLAMA_MODEL,
+            })
+
+            # ── Step 3: Similarity Explanation (NER + LLM, ~15-30s) ──
+            movie_row = DF[DF["title"] == detection["matched_movie"]]
+            if not movie_row.empty:
+                matched_plot = movie_row.iloc[0]["plot"]
+                if isinstance(matched_plot, str) and matched_plot.strip():
+                    sim_result = explain_similarity(
+                        user_plot=plot,
+                        matched_movie=detection["matched_movie"],
+                        matched_plot=matched_plot,
+                        similarity_score=detection["similarity_score"],
+                    )
+                    yield sse("similarity", sim_result)
+
+            yield sse("complete", {})
+
+        except Exception as e:
+            traceback.print_exc()
+            yield sse("error", {"error": str(e)})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/api/similarity", methods=["POST"])

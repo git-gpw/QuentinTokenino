@@ -75,7 +75,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
-from schema import MovieAnalysis, PLAGIARISM_THRESHOLD
+from schema import MovieAnalysis, PLAGIARISM_THRESHOLD, classify_similarity
 
 # Load models once at import time
 _nlp = spacy.load("en_core_web_sm")         # NER + noun chunks (~12MB)
@@ -149,6 +149,80 @@ def cleanup_logger(logger: logging.Logger):
 # (e.g. "Jedi", "lightsabers") rather than retelling the plot.
 ENTITY_BONUS_WEIGHT = 0.20  # max bonus from entity overlap
 POPULARITY_BOOST = 0.15  # max boost for ranking (not for threshold decision)
+
+
+# ---- Deterministic quips per category ----
+# Each template can use {movie} and optionally {elements}.
+# Templates with {elements} are only used when shared entities exist.
+QUIPS = {
+    "near_identical": [
+        "That's just {movie}.",
+        "This is {movie} with the serial numbers filed off.",
+        "You've basically rewritten {movie}.",
+        "I'm pretty sure I've seen this one — it's called {movie}.",
+        "Between the {elements}, this is basically {movie}.",
+        "You've got {elements} — that's just {movie}.",
+    ],
+    "strongly_similar": [
+        "Basically {movie} with a fresh coat of paint.",
+        "{movie} called — it wants its plot back.",
+        "This has strong {movie} energy.",
+        "Not quite {movie}, but definitely in the same neighborhood.",
+        "The {elements} give it away — very {movie}.",
+        "Swap out {elements} and you'd still recognize {movie}.",
+    ],
+    "notable_similarities": [
+        "Echoes of {movie}, but you're building something new.",
+        "There's some {movie} DNA in here.",
+        "Shades of {movie}, though your story diverges.",
+        "A {movie} vibe, but with your own twist.",
+        "The {elements} overlap with {movie}, but there's room to grow.",
+    ],
+    "minor_similarities": [
+        "A hint of {movie} — probably coincidence.",
+        "If you squint, there's a little {movie} in there.",
+        "Faint traces of {movie}, nothing to lose sleep over.",
+        "A distant cousin of {movie}, at most.",
+    ],
+    "highly_original": [
+        "Nothing to worry about — this is all you.",
+        "Hollywood hasn't seen this one before.",
+        "Fresh off the imagination — no doppelgängers in sight.",
+        "Completely off the beaten path. Nice.",
+    ],
+}
+
+
+def _format_elements(elements: list[str]) -> str:
+    """Format a list of shared elements for display in a quip."""
+    if len(elements) == 1:
+        return elements[0]
+    if len(elements) == 2:
+        return f"{elements[0]} and {elements[1]}"
+    return ", ".join(elements[:-1]) + f", and {elements[-1]}"
+
+
+def generate_quip(
+    plot: str, movie: str, category_id: str, shared_elements: list[str] | None = None,
+) -> str:
+    """
+    Deterministically select a quip based on the plot text hash.
+
+    Uses MD5 of the plot to pick consistently — same input always gets the same quip.
+    If shared elements are available, may include them in the quip.
+    """
+    quip_list = QUIPS.get(category_id, QUIPS["highly_original"])
+
+    has_elements = shared_elements and len(shared_elements) > 0
+    if has_elements:
+        elements_str = _format_elements(shared_elements)
+    else:
+        # Filter out templates that need {elements}
+        quip_list = [q for q in quip_list if "{elements}" not in q]
+
+    h = int(hashlib.md5(plot.encode()).hexdigest(), 16)
+    template = quip_list[h % len(quip_list)]
+    return template.format(movie=movie, elements=elements_str if has_elements else "")
 
 
 def _precompute_embeddings(df: pd.DataFrame) -> np.ndarray:
@@ -357,6 +431,7 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     #
     # Popularity amplifies the bonus: matching entities in a famous movie is
     # more suspicious than matching an obscure one. Scale: 0.5 (obscure) to 1.0 (famous).
+    user_ents = set()  # saved for shared_elements extraction after best_idx
     if _DB_ENTITIES is not None:
         user_doc = _nlp(user_plot)
         user_ents = {ent.text.lower() for ent in user_doc.ents}
@@ -400,11 +475,25 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
         for rank, idx in enumerate(top5_idx, 1)
     ]
 
+    # ---- Extract shared elements for the quip ----
+    shared_elements = []
+    if user_ents and _DB_ENTITIES is not None and best_idx < len(_DB_ENTITIES):
+        overlap = user_ents & _DB_ENTITIES[best_idx]
+        shared_elements = sorted(overlap)
+
+    # ---- Classify into Likert-style category ----
+    category = classify_similarity(best_score)
+    movie_title = df.iloc[best_idx]["title"]
+    quip = generate_quip(user_plot, movie_title, category["id"], shared_elements)
+
     return {
-        "matched_movie": df.iloc[best_idx]["title"],
+        "matched_movie": movie_title,
         "assigned_director": df.iloc[best_idx]["director"],
         "similarity_score": round(best_score, 4),
         "detected_plagiarism": best_score >= PLAGIARISM_THRESHOLD,
+        "category": category,
+        "quip": quip,
+        "shared_elements": shared_elements,
         "top_matches": top_matches,
     }
 

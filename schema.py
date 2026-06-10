@@ -29,6 +29,28 @@ from pydantic import BaseModel, Field
 PLAGIARISM_THRESHOLD = 0.30
 
 
+# -----------------------------------------------------------------------
+# Likert-style similarity categories — replaces binary yes/no in the UI.
+# The threshold above is still used internally (evaluation, logging),
+# but users see a spectrum from "Highly Original" to "Near Identical".
+# -----------------------------------------------------------------------
+SIMILARITY_CATEGORIES = [
+    {"id": "highly_original",      "max": 0.15, "label": "Highly Original",      "color": "#2ecc71"},
+    {"id": "minor_similarities",   "max": 0.25, "label": "Minor Similarities",   "color": "#1abc9c"},
+    {"id": "notable_similarities", "max": 0.35, "label": "Notable Similarities", "color": "#f39c12"},
+    {"id": "strongly_similar",     "max": 0.50, "label": "Strongly Similar",     "color": "#e67e22"},
+    {"id": "near_identical",       "max": 1.50, "label": "Near Identical",       "color": "#e94560"},
+]
+
+
+def classify_similarity(score: float) -> dict:
+    """Map a similarity score to a Likert-style category."""
+    for cat in SIMILARITY_CATEGORIES:
+        if score < cat["max"]:
+            return dict(cat)  # return a copy
+    return dict(SIMILARITY_CATEGORIES[-1])
+
+
 class MovieAnalysis(BaseModel):
     """
     The validated output of the cinematic pipeline.

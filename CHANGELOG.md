@@ -6,6 +6,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.0] - 2026-06-10
+
+### Added
+- **Likert-style similarity categories** replace binary plagiarism yes/no.
+  Five levels: Highly Original, Minor Similarities, Notable Similarities,
+  Strongly Similar, Near Identical. Each has a distinct color in the UI.
+- **Deterministic quips** — witty one-liners based on score category, movie
+  name, and shared entity elements. Same input always produces the same quip.
+  Examples: "That's just Star Wars." / "Echoes of Inception, but you're
+  building something new."
+- **Server-Sent Events (SSE) streaming** endpoint `/api/analyze-stream`.
+  Results arrive progressively: detection (instant) → rewrite (~15-30s) →
+  similarity (~15-30s). No more waiting 60s for everything at once.
+- **Progressive UI rendering** — each result section fades in as its data
+  arrives. Loading indicator dynamically updates with current task name
+  (e.g. "Rewriting in Ridley Scott's style...").
+- `shared_elements` field in detection output — the named entities the user's
+  plot shares with the best-matched movie.
+
+### Changed
+- Verdict card uses category-based colors and labels instead of binary
+  "Plagiarism Detected" / "Original Plot".
+- Score bar thresholds updated to align with Likert categories.
+- Search history shows category labels instead of PLAG/ORIG badges.
+- Rewrite and stylistic notes merged into a single card for cleaner layout.
+
+
 ## [0.8.0] - 2026-06-10
 
 ### Added
