@@ -1,5 +1,5 @@
 """
-pipeline.py - The Cinematic Pipeline (replaces agent.py).
+pipeline.py - The Cinematic Pipeline.
 
 WHAT THIS DOES (plain English):
 ================================
