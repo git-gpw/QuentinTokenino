@@ -138,10 +138,16 @@ def cleanup_logger(logger: logging.Logger):
 # -----------------------------------------------------------------------
 
 # ---- Scoring config ----
-# Dual-signal approach: SBERT captures semantic meaning (paraphrases),
-# TF-IDF captures vocabulary overlap (distinguishes genre similarity from
-# actual plagiarism). Combined via geometric mean: sqrt(sbert * tfidf).
-# This requires BOTH signals to be high for a high combined score.
+# Three-signal approach:
+#   1. SBERT: semantic meaning (catches paraphrases)
+#   2. TF-IDF: vocabulary overlap (distinguishes genre from plagiarism)
+#   3. NER entity overlap: proper noun matching (catches keyword descriptions)
+#
+# Base score = geometric mean of SBERT + TF-IDF: sqrt(sbert * tfidf).
+# Entity bonus = Jaccard overlap of named entities, only adds, never subtracts.
+# This handles the case where a user describes a movie by its unique names
+# (e.g. "Jedi", "lightsabers") rather than retelling the plot.
+ENTITY_BONUS_WEIGHT = 0.20  # max bonus from entity overlap
 POPULARITY_BOOST = 0.15  # max boost for ranking (not for threshold decision)
 
 
@@ -165,10 +171,27 @@ def _prefit_tfidf(df: pd.DataFrame):
     return vectorizer, db_matrix
 
 
+def _precompute_entities(df: pd.DataFrame) -> list[set[str]]:
+    """
+    Extract lowercased named entity sets from all movie plots using spaCy.
+
+    Called once at startup, cached to disk. Each movie gets a set of
+    unique entity texts (lowercased) for fast Jaccard overlap at query time.
+    ~2-3 minutes for 16k plots via nlp.pipe().
+    """
+    plots = df["plot"].tolist()
+    entity_sets = []
+    for doc in _nlp.pipe(plots, batch_size=256, disable=["tagger", "parser", "lemmatizer"]):
+        ents = {ent.text.lower() for ent in doc.ents}
+        entity_sets.append(ents)
+    return entity_sets
+
+
 # Module-level cache — populated by app.py at startup via init_nlp()
 _DB_EMBEDDINGS = None
 _TFIDF_VECTORIZER = None
 _TFIDF_MATRIX = None
+_DB_ENTITIES = None
 _DB_POPULARITY = None
 
 # Disk cache location
@@ -197,7 +220,7 @@ def _load_cache(expected_hash: str):
     return None
 
 
-def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix):
+def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix, entity_sets):
     """Save NLP features to disk for fast subsequent startups.
 
     Writes to a temp file first, then renames atomically to avoid
@@ -208,6 +231,7 @@ def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix):
         "embeddings": embeddings,
         "tfidf_vectorizer": tfidf_vectorizer,
         "tfidf_matrix": tfidf_matrix,
+        "entity_sets": entity_sets,
     }
     tmp_path = _NLP_CACHE_PATH + ".tmp"
     with open(tmp_path, "wb") as f:
@@ -219,16 +243,17 @@ def init_nlp(df: pd.DataFrame):
     """
     Compute and cache all NLP features for the movie database. Call once at startup.
 
-    On first run, encodes all plots with SBERT + TF-IDF and saves to
-    nlp_cache.pkl (~3 min). On subsequent runs, loads from cache in
+    On first run, encodes all plots with SBERT + TF-IDF + spaCy NER and saves
+    to nlp_cache.pkl (~5 min). On subsequent runs, loads from cache in
     ~2 seconds if the dataset hasn't changed (SHA-256 hash check).
 
     Caches:
         - SBERT embeddings (384-dim per movie, semantic similarity)
         - TF-IDF vectorizer + matrix (vocabulary overlap)
+        - spaCy NER entity sets (per-movie entity text sets for Jaccard overlap)
         - Popularity scores (for ranking boost)
     """
-    global _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_POPULARITY
+    global _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES, _DB_POPULARITY
 
     data_hash = _csv_hash(df)
     cache = _load_cache(data_hash)
@@ -238,11 +263,19 @@ def init_nlp(df: pd.DataFrame):
         _DB_EMBEDDINGS = cache["embeddings"]
         _TFIDF_VECTORIZER = cache["tfidf_vectorizer"]
         _TFIDF_MATRIX = cache["tfidf_matrix"]
+        _DB_ENTITIES = cache.get("entity_sets")
+        # Backfill: if cache was built before entity support, compute now
+        if _DB_ENTITIES is None:
+            print(f"  Entity sets not in cache — extracting from {len(df)} plots...")
+            _DB_ENTITIES = _precompute_entities(df)
+            _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES)
+            print(f"  Updated cache with entity sets")
     else:
-        print(f"  NLP cache miss — encoding {len(df)} movies with SBERT + TF-IDF...")
+        print(f"  NLP cache miss — encoding {len(df)} movies with SBERT + TF-IDF + NER...")
         _DB_EMBEDDINGS = _precompute_embeddings(df)
         _TFIDF_VECTORIZER, _TFIDF_MATRIX = _prefit_tfidf(df)
-        _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX)
+        _DB_ENTITIES = _precompute_entities(df)
+        _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES)
         print(f"  NLP features cached to {_NLP_CACHE_PATH}")
 
     if "popularity" in df.columns:
@@ -258,15 +291,21 @@ init_tfidf = init_nlp
 def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     """
     Compare the user's plot against every movie in the database using
-    dual-signal similarity: SBERT (semantic) + TF-IDF (vocabulary).
+    three-signal similarity: SBERT + TF-IDF + NER entity overlap.
 
-    WHY TWO SIGNALS:
-        - SBERT alone catches paraphrases but can't distinguish "same story"
-          from "same genre" — both score high semantically.
-        - TF-IDF alone misses paraphrases that use different words.
-        - Combined via geometric mean: sqrt(sbert * tfidf). This requires
-          BOTH signals to be high, naturally filtering genre overlap while
-          catching true paraphrases.
+    THREE SIGNALS:
+        - SBERT (semantic): catches paraphrases, but can't distinguish
+          "same story" from "same genre".
+        - TF-IDF (vocabulary): distinguishes genre from plagiarism via
+          specific word overlap, but misses synonym-based rewording.
+        - NER entity overlap (proper nouns): catches keyword descriptions
+          like "Jedi, lightsabers" that both SBERT and TF-IDF miss when
+          the user's plot is short and the DB plot is long.
+
+    SCORING:
+        base_score = sqrt(sbert * tfidf)                   # geometric mean
+        entity_recall = overlap / len(user_entities)       # fraction of user's entities found
+        final_score = base_score + 0.20 * entity_recall    # entity bonus (additive)
 
     POPULARITY RANKING:
         When two movies score similarly, the more famous one ranks higher.
@@ -280,7 +319,7 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
         dict with:
             matched_movie       - title of the closest film
             assigned_director   - that film's director
-            similarity_score    - geometric mean of SBERT + TF-IDF (0.0 - 1.0)
+            similarity_score    - combined score (0.0 - ~1.2)
             detected_plagiarism - True if score >= PLAGIARISM_THRESHOLD
             top_matches         - list of top 5 matches for transparency
     """
@@ -309,6 +348,22 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     sbert_clamped = np.maximum(sbert_scores, 0)
     tfidf_clamped = np.maximum(tfidf_scores, 0)
     combined_scores = np.sqrt(sbert_clamped * tfidf_clamped)
+
+    # ---- Signal 3: NER entity overlap bonus ----
+    # Catches keyword descriptions (e.g. "Jedi", "lightsabers") that SBERT and
+    # TF-IDF miss due to short user plots vs long DB plots. Only adds, never hurts.
+    # Uses recall (overlap / user count) not Jaccard, because the DB plots have
+    # far more entities and Jaccard would crush the signal (1/46 ≈ 0.02).
+    if _DB_ENTITIES is not None:
+        user_doc = _nlp(user_plot)
+        user_ents = {ent.text.lower() for ent in user_doc.ents}
+        if user_ents:
+            n_user = len(user_ents)
+            entity_bonuses = np.array([
+                len(user_ents & db_ents) / n_user
+                for db_ents in _DB_ENTITIES
+            ])
+            combined_scores = combined_scores + ENTITY_BONUS_WEIGHT * entity_bonuses
 
     # ---- Popularity-boosted ranking score ----
     if _DB_POPULARITY is not None:

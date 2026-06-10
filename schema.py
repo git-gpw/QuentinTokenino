@@ -14,15 +14,17 @@ from pydantic import BaseModel, Field
 
 # -----------------------------------------------------------------------
 # SINGLE SOURCE OF TRUTH for the plagiarism decision boundary.
-# Score = geometric mean of SBERT (semantic) + TF-IDF (vocabulary).
+# Score = geometric mean of SBERT + TF-IDF, plus NER entity overlap bonus.
+#   final = sqrt(sbert * tfidf) + 0.20 * entity_jaccard
 #
 # Calibrated against our 50-case test set (see evaluation.py).
-# Dual-signal scores on the 16,455-movie enriched dataset:
-#   - Blatant paraphrases score 0.20 - 0.70  (geometric mean)
+# Three-signal scores on the 16,455-movie enriched dataset:
+#   - Blatant paraphrases score 0.20 - 0.70+
 #   - Partial overlap scores    0.21 - 0.37
 #   - Original plots score      0.15 - 0.32
 # 0.30 balances precision and recall for the screenwriter use case.
 # Conservative alternative: 0.38 (100% precision, lower recall).
+# NOTE: threshold may need recalibration after adding entity bonus.
 # -----------------------------------------------------------------------
 PLAGIARISM_THRESHOLD = 0.30
 
