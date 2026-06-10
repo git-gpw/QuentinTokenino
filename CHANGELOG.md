@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.7.1] - 2026-06-10
+
+### Fixed
+- "undefined" text in Most Similar Aspects UI when LLM returns variant key
+  names (`name` instead of `aspect`, `description` instead of `explanation`).
+  Now falls back across common key variants.
+
+
 ## [0.7.0] - 2026-06-10
 
 ### Summary
