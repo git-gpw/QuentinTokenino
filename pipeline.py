@@ -349,21 +349,31 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     tfidf_clamped = np.maximum(tfidf_scores, 0)
     combined_scores = np.sqrt(sbert_clamped * tfidf_clamped)
 
-    # ---- Signal 3: NER entity overlap bonus ----
+    # ---- Signal 3: NER entity overlap bonus (popularity-weighted) ----
     # Catches keyword descriptions (e.g. "Jedi", "lightsabers") that SBERT and
     # TF-IDF miss due to short user plots vs long DB plots. Only adds, never hurts.
     # Uses recall (overlap / user count) not Jaccard, because the DB plots have
     # far more entities and Jaccard would crush the signal (1/46 ≈ 0.02).
+    #
+    # Popularity amplifies the bonus: matching entities in a famous movie is
+    # more suspicious than matching an obscure one. Scale: 0.5 (obscure) to 1.0 (famous).
     if _DB_ENTITIES is not None:
         user_doc = _nlp(user_plot)
         user_ents = {ent.text.lower() for ent in user_doc.ents}
         if user_ents:
             n_user = len(user_ents)
-            entity_bonuses = np.array([
+            entity_recall = np.array([
                 len(user_ents & db_ents) / n_user
                 for db_ents in _DB_ENTITIES
             ])
-            combined_scores = combined_scores + ENTITY_BONUS_WEIGHT * entity_bonuses
+            # Scale by popularity: famous movies get full bonus, obscure get half
+            if _DB_POPULARITY is not None:
+                pop_scale = 0.5 + 0.5 * _DB_POPULARITY
+            elif "popularity" in df.columns:
+                pop_scale = 0.5 + 0.5 * df["popularity"].values
+            else:
+                pop_scale = 1.0
+            combined_scores = combined_scores + ENTITY_BONUS_WEIGHT * entity_recall * pop_scale
 
     # ---- Popularity-boosted ranking score ----
     if _DB_POPULARITY is not None:
