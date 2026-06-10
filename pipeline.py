@@ -92,6 +92,9 @@ def setup_logger(name: str = "pipeline") -> logging.Logger:
 
     Log files go to logs/<name>_<timestamp>.log so you can always go back
     and see exactly what happened on any given run.
+
+    Cleanup: call cleanup_logger(logger) when done to close file handlers
+    and prevent file descriptor leaks in long-running processes.
     """
     os.makedirs("logs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -117,6 +120,13 @@ def setup_logger(name: str = "pipeline") -> logging.Logger:
 
     logger.log_path = log_path  # stash path for later reference
     return logger
+
+
+def cleanup_logger(logger: logging.Logger):
+    """Close and remove all handlers to prevent file descriptor leaks."""
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
 
 
 # -----------------------------------------------------------------------
@@ -329,63 +339,69 @@ def run_pipeline(
 
     Every step is logged to both console and a file in logs/.
     """
-    if log is None:
+    owns_logger = log is None
+    if owns_logger:
         log = setup_logger("pipeline")
 
-    log.info("=" * 60)
-    log.info("CINEMATIC PIPELINE - NEW RUN")
-    log.info("=" * 60)
-    log.info(f"Input: \"{user_plot[:120]}{'...' if len(user_plot) > 120 else ''}\"")
+    try:
+        log.info("=" * 60)
+        log.info("CINEMATIC PIPELINE - NEW RUN")
+        log.info("=" * 60)
+        log.info(f"Input: \"{user_plot[:120]}{'...' if len(user_plot) > 120 else ''}\"")
 
-    # Load database (skip if caller passed a DataFrame)
-    if df is None:
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(f"Movie database not found at: {csv_path}")
-        df = pd.read_csv(csv_path)
-    log.info(f"Database: {len(df)} movies")
+        # Load database (skip if caller passed a DataFrame)
+        if df is None:
+            if not os.path.exists(csv_path):
+                raise FileNotFoundError(f"Movie database not found at: {csv_path}")
+            df = pd.read_csv(csv_path)
+        log.info(f"Database: {len(df)} movies")
 
-    # -- STEP 1: Plagiarism detection (local) --
-    log.info("-" * 50)
-    log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
-    if detection is None:
-        detection = detect_plagiarism(user_plot, df)
+        # -- STEP 1: Plagiarism detection (local) --
+        log.info("-" * 50)
+        log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
+        if detection is None:
+            detection = detect_plagiarism(user_plot, df)
 
-    is_plag = detection["detected_plagiarism"]
-    log.info(f"  Best match:  \"{detection['matched_movie']}\"")
-    log.info(f"  Director:    {detection['assigned_director']}")
-    log.info(f"  Score:       {detection['similarity_score']}")
-    log.info(f"  Plagiarism:  {'YES' if is_plag else 'NO'}  (threshold: {PLAGIARISM_THRESHOLD})")
-    log.info("  Top 5 matches:")
-    for m in detection["top_matches"]:
-        log.info(f"    {m['rank']}. \"{m['title']}\" ({m['director']}) - {m['score']}")
+        is_plag = detection["detected_plagiarism"]
+        log.info(f"  Best match:  \"{detection['matched_movie']}\"")
+        log.info(f"  Director:    {detection['assigned_director']}")
+        log.info(f"  Score:       {detection['similarity_score']}")
+        log.info(f"  Plagiarism:  {'YES' if is_plag else 'NO'}  (threshold: {PLAGIARISM_THRESHOLD})")
+        log.info("  Top 5 matches:")
+        for m in detection["top_matches"]:
+            log.info(f"    {m['rank']}. \"{m['title']}\" ({m['director']}) - {m['score']}")
 
-    # -- STEP 2: Director routing --
-    log.info("-" * 50)
-    log.info(f"STEP 2: Routed to director -> {detection['assigned_director']}")
+        # -- STEP 2: Director routing --
+        log.info("-" * 50)
+        log.info(f"STEP 2: Routed to director -> {detection['assigned_director']}")
 
-    # -- STEP 3: LLM rewrite --
-    log.info("STEP 3: Calling Gemma3 via Ollama for style rewrite...")
-    raw_json = rewrite_in_director_style(
-        user_plot=user_plot,
-        matched_movie=detection["matched_movie"],
-        assigned_director=detection["assigned_director"],
-        similarity_score=detection["similarity_score"],
-        detected_plagiarism=detection["detected_plagiarism"],
-    )
-    log.info("  LLM response received.")
+        # -- STEP 3: LLM rewrite --
+        log.info("STEP 3: Calling Gemma3 via Ollama for style rewrite...")
+        raw_json = rewrite_in_director_style(
+            user_plot=user_plot,
+            matched_movie=detection["matched_movie"],
+            assigned_director=detection["assigned_director"],
+            similarity_score=detection["similarity_score"],
+            detected_plagiarism=detection["detected_plagiarism"],
+        )
+        log.info("  LLM response received.")
 
-    # -- STEP 4: Pydantic validation --
-    log.info("-" * 50)
-    log.info("STEP 4: Pydantic schema validation")
-    result = validate_output(raw_json)
-    log.info("  Validation: PASSED")
-    log.info(f"  Fields: {list(result.model_dump().keys())}")
+        # -- STEP 4: Pydantic validation --
+        log.info("-" * 50)
+        log.info("STEP 4: Pydantic schema validation")
+        result = validate_output(raw_json)
+        log.info("  Validation: PASSED")
+        log.info(f"  Fields: {list(result.model_dump().keys())}")
 
-    log.info("=" * 60)
-    log.info("PIPELINE COMPLETE")
-    log.info("=" * 60)
+        log.info("=" * 60)
+        log.info("PIPELINE COMPLETE")
+        log.info("=" * 60)
 
-    return result
+        return result
+
+    finally:
+        if owns_logger:
+            cleanup_logger(log)
 
 
 # -----------------------------------------------------------------------
