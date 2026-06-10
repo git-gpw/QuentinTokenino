@@ -434,6 +434,21 @@
         }
         .loading-msg.visible { display: block; }
 
+        /* ── Inline Errors ───────────────────────────── */
+        .error-banner {
+            display: none;
+            background: linear-gradient(135deg, #2d1117 0%, #1a0a0e 100%);
+            border: 1px solid #e94560;
+            border-radius: 8px;
+            padding: 1rem 1.2rem;
+            margin-bottom: 1rem;
+            color: #e94560;
+            font-size: 0.9rem;
+        }
+        .error-banner.visible { display: block; }
+        .error-banner .error-title { font-weight: 700; margin-bottom: 0.3rem; }
+        .error-banner .error-detail { color: #c0392b; font-size: 0.82rem; }
+
         /* ── Responsive ──────────────────────────────── */
         @media (max-width: 640px) {
             .container { padding: 1rem; }
@@ -495,6 +510,12 @@
             <span class="spinner"></span> Running pipeline... (TF-IDF detection + LLM rewrite, ~30 seconds)
         </div>
 
+        <!-- Error Banner -->
+        <div class="error-banner" id="analyze-error">
+            <div class="error-title">Analysis Failed</div>
+            <div class="error-detail" id="analyze-error-detail"></div>
+        </div>
+
         <!-- Results -->
         <div class="results" id="results">
             <!-- Verdict -->
@@ -552,6 +573,10 @@
                 <div class="loading-msg" id="diff-loading">
                     <span class="spinner"></span> Generating strategies...
                 </div>
+                <div class="error-banner" id="diff-error">
+                    <div class="error-title">Differentiation Failed</div>
+                    <div class="error-detail"></div>
+                </div>
                 <div class="strategies" id="strategies"></div>
             </div>
         </div>
@@ -576,6 +601,11 @@
 
         <div class="loading-msg" id="eval-loading">
             <span class="spinner"></span> Running evaluation... (this takes a few minutes with LLM calls)
+        </div>
+
+        <div class="error-banner" id="eval-error">
+            <div class="error-title">Evaluation Failed</div>
+            <div class="error-detail"></div>
         </div>
 
         <!-- Metrics Cards -->
@@ -804,7 +834,19 @@
         }
     }
 
+    function showError(bannerId, message) {
+        const banner = document.getElementById(bannerId);
+        const detail = banner.querySelector('.error-detail');
+        detail.textContent = message;
+        banner.classList.add('visible');
+    }
+
+    function hideError(bannerId) {
+        document.getElementById(bannerId).classList.remove('visible');
+    }
+
     // ── Analyze ─────────────────────────────────────
+    let flowTimers = [];
     async function analyzePlot() {
         const plot = document.getElementById('plot-input').value.trim();
         if (!plot) return;
@@ -812,12 +854,16 @@
         const btn = document.getElementById('analyze-btn');
         btn.disabled = true;
         document.getElementById('results').classList.remove('visible');
+        document.getElementById('analyze-error').classList.remove('visible');
         document.getElementById('analyze-loading').classList.add('visible');
         setFlowStep(1);
 
-        // Animate steps (approximate timing)
-        setTimeout(() => setFlowStep(2), 500);
-        setTimeout(() => setFlowStep(3), 1500);
+        // Animate steps (approximate timing) — track so we can cancel on error
+        flowTimers.forEach(t => clearTimeout(t));
+        flowTimers = [
+            setTimeout(() => setFlowStep(2), 500),
+            setTimeout(() => setFlowStep(3), 1500),
+        ];
 
         try {
             const res = await fetch('/api/analyze', {
@@ -851,7 +897,9 @@
             });
 
         } catch (err) {
-            alert('Error: ' + err.message);
+            flowTimers.forEach(t => clearTimeout(t));
+            flowTimers = [];
+            showError('analyze-error', err.message);
             clearFlow();
         } finally {
             btn.disabled = false;
@@ -969,6 +1017,7 @@
 
         const btn = document.getElementById('diff-btn');
         btn.style.display = 'none';
+        hideError('diff-error');
         document.getElementById('diff-loading').classList.add('visible');
 
         try {
@@ -994,7 +1043,7 @@
             ).join('');
 
         } catch (err) {
-            alert('Error: ' + err.message);
+            showError('diff-error', err.message);
             btn.style.display = 'inline-block';
         } finally {
             document.getElementById('diff-loading').classList.remove('visible');
@@ -1007,6 +1056,7 @@
         const localBtn = document.getElementById('eval-local-btn');
         fullBtn.disabled = true;
         localBtn.disabled = true;
+        hideError('eval-error');
         document.getElementById('eval-loading').classList.add('visible');
         document.getElementById('metrics-grid').style.display = 'none';
         document.getElementById('detail-metrics').style.display = 'none';
@@ -1024,7 +1074,7 @@
             renderEvalResults(data.report);
 
         } catch (err) {
-            alert('Error: ' + err.message);
+            showError('eval-error', err.message);
         } finally {
             fullBtn.disabled = false;
             localBtn.disabled = false;

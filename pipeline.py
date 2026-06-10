@@ -1,5 +1,5 @@
 """
-pipeline.py - The Cinematic Pipeline (replaces agent.py).
+pipeline.py - The Cinematic Pipeline.
 
 WHAT THIS DOES (plain English):
 ================================
@@ -92,6 +92,9 @@ def setup_logger(name: str = "pipeline") -> logging.Logger:
 
     Log files go to logs/<name>_<timestamp>.log so you can always go back
     and see exactly what happened on any given run.
+
+    Cleanup: call cleanup_logger(logger) when done to close file handlers
+    and prevent file descriptor leaks in long-running processes.
     """
     os.makedirs("logs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -119,9 +122,42 @@ def setup_logger(name: str = "pipeline") -> logging.Logger:
     return logger
 
 
+def cleanup_logger(logger: logging.Logger):
+    """Close and remove all handlers to prevent file descriptor leaks."""
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+
+
 # -----------------------------------------------------------------------
 # STEP 1: Plagiarism Detection (deterministic, local, no API)
 # -----------------------------------------------------------------------
+
+def prefit_tfidf(df: pd.DataFrame):
+    """
+    Fit the TF-IDF vectorizer on the movie database once and cache results.
+
+    This is called once at startup. Per-request, only the user's plot
+    needs to be transformed — the DB matrix is reused.
+
+    Returns:
+        Tuple of (vectorizer, db_matrix) to be stored at module level.
+    """
+    vectorizer = TfidfVectorizer(stop_words="english")
+    db_matrix = vectorizer.fit_transform(df["plot"].tolist())
+    return vectorizer, db_matrix
+
+
+# Module-level cache — populated by app.py at startup via init_tfidf()
+_VECTORIZER = None
+_DB_MATRIX = None
+
+
+def init_tfidf(df: pd.DataFrame):
+    """Fit and cache the TF-IDF vectorizer + DB matrix. Call once at startup."""
+    global _VECTORIZER, _DB_MATRIX
+    _VECTORIZER, _DB_MATRIX = prefit_tfidf(df)
+
 
 def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     """
@@ -135,6 +171,10 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
           those distinctive words.
         - 1.0 = identical wording.  0.0 = nothing in common.
 
+    If init_tfidf() was called at startup, uses the cached vectorizer
+    and DB matrix for fast per-request transforms. Otherwise falls back
+    to fitting from scratch (for standalone / evaluation use).
+
     Args:
         user_plot: The user's free-text plot description.
         df:        DataFrame with at least columns: title, director, plot.
@@ -147,15 +187,18 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
             detected_plagiarism - True if score >= PLAGIARISM_THRESHOLD
             top_matches         - list of top 5 matches for transparency
     """
-    db_plots = df["plot"].tolist()
+    if _VECTORIZER is not None and _DB_MATRIX is not None:
+        # Fast path: reuse pre-fitted vectorizer
+        user_vector = _VECTORIZER.transform([user_plot])
+        db_vectors = _DB_MATRIX
+    else:
+        # Fallback: fit from scratch (standalone use)
+        db_plots = df["plot"].tolist()
+        vectorizer = TfidfVectorizer(stop_words="english")
+        tfidf_matrix = vectorizer.fit_transform(db_plots + [user_plot])
+        user_vector = tfidf_matrix[-1]
+        db_vectors = tfidf_matrix[:-1]
 
-    # Build TF-IDF matrix: all database plots + user's plot at the end
-    vectorizer = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = vectorizer.fit_transform(db_plots + [user_plot])
-
-    # Compare user (last row) against all database entries
-    user_vector = tfidf_matrix[-1]
-    db_vectors = tfidf_matrix[:-1]
     scores = sklearn_cosine(user_vector, db_vectors).flatten()
 
     # Best match
@@ -241,7 +284,7 @@ Required JSON schema:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.1},
+        options={"temperature": 0.1, "num_predict": 2048},
     )
     return response.message.content
 
@@ -296,63 +339,69 @@ def run_pipeline(
 
     Every step is logged to both console and a file in logs/.
     """
-    if log is None:
+    owns_logger = log is None
+    if owns_logger:
         log = setup_logger("pipeline")
 
-    log.info("=" * 60)
-    log.info("CINEMATIC PIPELINE - NEW RUN")
-    log.info("=" * 60)
-    log.info(f"Input: \"{user_plot[:120]}{'...' if len(user_plot) > 120 else ''}\"")
+    try:
+        log.info("=" * 60)
+        log.info("CINEMATIC PIPELINE - NEW RUN")
+        log.info("=" * 60)
+        log.info(f"Input: \"{user_plot[:120]}{'...' if len(user_plot) > 120 else ''}\"")
 
-    # Load database (skip if caller passed a DataFrame)
-    if df is None:
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(f"Movie database not found at: {csv_path}")
-        df = pd.read_csv(csv_path)
-    log.info(f"Database: {len(df)} movies")
+        # Load database (skip if caller passed a DataFrame)
+        if df is None:
+            if not os.path.exists(csv_path):
+                raise FileNotFoundError(f"Movie database not found at: {csv_path}")
+            df = pd.read_csv(csv_path)
+        log.info(f"Database: {len(df)} movies")
 
-    # -- STEP 1: Plagiarism detection (local) --
-    log.info("-" * 50)
-    log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
-    if detection is None:
-        detection = detect_plagiarism(user_plot, df)
+        # -- STEP 1: Plagiarism detection (local) --
+        log.info("-" * 50)
+        log.info("STEP 1: TF-IDF Plagiarism Detection (local)")
+        if detection is None:
+            detection = detect_plagiarism(user_plot, df)
 
-    is_plag = detection["detected_plagiarism"]
-    log.info(f"  Best match:  \"{detection['matched_movie']}\"")
-    log.info(f"  Director:    {detection['assigned_director']}")
-    log.info(f"  Score:       {detection['similarity_score']}")
-    log.info(f"  Plagiarism:  {'YES' if is_plag else 'NO'}  (threshold: {PLAGIARISM_THRESHOLD})")
-    log.info("  Top 5 matches:")
-    for m in detection["top_matches"]:
-        log.info(f"    {m['rank']}. \"{m['title']}\" ({m['director']}) - {m['score']}")
+        is_plag = detection["detected_plagiarism"]
+        log.info(f"  Best match:  \"{detection['matched_movie']}\"")
+        log.info(f"  Director:    {detection['assigned_director']}")
+        log.info(f"  Score:       {detection['similarity_score']}")
+        log.info(f"  Plagiarism:  {'YES' if is_plag else 'NO'}  (threshold: {PLAGIARISM_THRESHOLD})")
+        log.info("  Top 5 matches:")
+        for m in detection["top_matches"]:
+            log.info(f"    {m['rank']}. \"{m['title']}\" ({m['director']}) - {m['score']}")
 
-    # -- STEP 2: Director routing --
-    log.info("-" * 50)
-    log.info(f"STEP 2: Routed to director -> {detection['assigned_director']}")
+        # -- STEP 2: Director routing --
+        log.info("-" * 50)
+        log.info(f"STEP 2: Routed to director -> {detection['assigned_director']}")
 
-    # -- STEP 3: LLM rewrite --
-    log.info("STEP 3: Calling Gemma3 via Ollama for style rewrite...")
-    raw_json = rewrite_in_director_style(
-        user_plot=user_plot,
-        matched_movie=detection["matched_movie"],
-        assigned_director=detection["assigned_director"],
-        similarity_score=detection["similarity_score"],
-        detected_plagiarism=detection["detected_plagiarism"],
-    )
-    log.info("  LLM response received.")
+        # -- STEP 3: LLM rewrite --
+        log.info("STEP 3: Calling Gemma3 via Ollama for style rewrite...")
+        raw_json = rewrite_in_director_style(
+            user_plot=user_plot,
+            matched_movie=detection["matched_movie"],
+            assigned_director=detection["assigned_director"],
+            similarity_score=detection["similarity_score"],
+            detected_plagiarism=detection["detected_plagiarism"],
+        )
+        log.info("  LLM response received.")
 
-    # -- STEP 4: Pydantic validation --
-    log.info("-" * 50)
-    log.info("STEP 4: Pydantic schema validation")
-    result = validate_output(raw_json)
-    log.info("  Validation: PASSED")
-    log.info(f"  Fields: {list(result.model_dump().keys())}")
+        # -- STEP 4: Pydantic validation --
+        log.info("-" * 50)
+        log.info("STEP 4: Pydantic schema validation")
+        result = validate_output(raw_json)
+        log.info("  Validation: PASSED")
+        log.info(f"  Fields: {list(result.model_dump().keys())}")
 
-    log.info("=" * 60)
-    log.info("PIPELINE COMPLETE")
-    log.info("=" * 60)
+        log.info("=" * 60)
+        log.info("PIPELINE COMPLETE")
+        log.info("=" * 60)
 
-    return result
+        return result
+
+    finally:
+        if owns_logger:
+            cleanup_logger(log)
 
 
 # -----------------------------------------------------------------------
@@ -490,10 +539,13 @@ Respond with ONLY a JSON object:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.3},
+        options={"temperature": 0.3, "num_predict": 2048},
     )
 
-    data = json.loads(response.message.content)
+    try:
+        data = json.loads(response.message.content)
+    except json.JSONDecodeError:
+        data = {"aspects": []}
 
     return {
         "shared_entities": shared,
@@ -550,10 +602,13 @@ Respond with ONLY a JSON object:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.7},
+        options={"temperature": 0.7, "num_predict": 2048},
     )
 
-    data = json.loads(response.message.content)
+    try:
+        data = json.loads(response.message.content)
+    except json.JSONDecodeError:
+        return []
     return data.get("strategies", [])
 
 

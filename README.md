@@ -122,16 +122,9 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 | `schema.py` | Defines the output format (6 fields) | No |
 | `evaluation.py` | Tests the pipeline with 15 movie plots | Optional |
 | `data_cleaning.ipynb` | Jupyter notebook that merges CMU + MovieSum + IMDB data | No |
-| `generate_dataset.py` | Creates the original 196-movie seed database | No |
 | `movies_dataset.csv` | The movie database (16,455 movies, 8,155 directors) | No |
 | `requirements.txt` | Python package dependencies | -- |
 | `logs/` | Timestamped logs from every run | -- |
-
-### Legacy files (from v0.1, no longer used):
-| File | Why it's here |
-|---|---|
-| `agent.py` | Old pipeline using neural embeddings. Replaced by `pipeline.py`. |
-| `generate_embeddings.py` | Generated embedding vectors. Not needed with TF-IDF. |
 
 ---
 

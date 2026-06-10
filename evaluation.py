@@ -421,7 +421,7 @@ def run_evaluation(
 
     for i, case in enumerate(EVAL_CASES):
         log.info("")
-        log.info(f"--- Case {i + 1}/15: {case['id']} [{case['tier']}] ---")
+        log.info(f"--- Case {i + 1}/{len(EVAL_CASES)}: {case['id']} [{case['tier']}] ---")
         log.info(f"  Plot:     \"{case['user_plot'][:80]}...\"")
         log.info(f"  Expected: {'PLAGIARISM' if case['expected_plagiarism'] else 'ORIGINAL'}")
 
@@ -457,7 +457,10 @@ def run_evaluation(
             # ---- STEPS 2-4: LLM rewrite + validation (optional) ----
             if run_llm:
                 result["llm_attempted"] = True
-                pipeline_result = run_pipeline(case["user_plot"], csv_path, log=log)
+                pipeline_result = run_pipeline(
+                    case["user_plot"], csv_path, log=log,
+                    df=df, detection=detection,
+                )
                 result["schema_valid"] = True
 
                 # ---- METRIC 3: LLM-as-a-Judge ----
