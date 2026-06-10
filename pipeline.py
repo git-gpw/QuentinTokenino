@@ -274,7 +274,7 @@ Required JSON schema:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.1},
+        options={"temperature": 0.1, "num_predict": 2048},
     )
     return response.message.content
 
@@ -523,10 +523,13 @@ Respond with ONLY a JSON object:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.3},
+        options={"temperature": 0.3, "num_predict": 2048},
     )
 
-    data = json.loads(response.message.content)
+    try:
+        data = json.loads(response.message.content)
+    except json.JSONDecodeError:
+        data = {"aspects": []}
 
     return {
         "shared_entities": shared,
@@ -583,10 +586,13 @@ Respond with ONLY a JSON object:
         model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
         format="json",
-        options={"temperature": 0.7},
+        options={"temperature": 0.7, "num_predict": 2048},
     )
 
-    data = json.loads(response.message.content)
+    try:
+        data = json.loads(response.message.content)
+    except json.JSONDecodeError:
+        return []
     return data.get("strategies", [])
 
 
