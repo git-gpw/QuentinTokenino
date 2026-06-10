@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------
 # SINGLE SOURCE OF TRUTH for the plagiarism decision boundary.
 # Score = geometric mean of SBERT + TF-IDF, plus NER entity overlap bonus.
-#   final = sqrt(sbert * tfidf) + 0.20 * entity_jaccard
+#   final = sqrt(sbert * tfidf) + 0.20 * entity_recall * pop_scale
 #
 # Calibrated against our 50-case test set (see evaluation.py).
 # Three-signal scores on the 16,455-movie enriched dataset:

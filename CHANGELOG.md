@@ -13,6 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   named entities from the user's plot and computes recall against each DB
   movie's pre-computed entity set. Applied as additive bonus (0.20 * recall)
   — only helps, never hurts existing scores.
+- **Popularity-weighted entity bonus**: entity overlap with famous movies
+  (high IMDB numVotes) is amplified; obscure matches are dampened. Scale
+  factor: 0.5 (obscure) to 1.0 (famous).
 - Entity sets cached to `nlp_cache.pkl` alongside SBERT and TF-IDF features.
   Old caches trigger a one-time backfill (~3 min).
 
@@ -20,6 +23,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Keyword description blind spot**: short plots mentioning distinctive proper
   nouns (e.g. "Jedi", "lightsabers") now correctly match their source movies.
   Previously scored 0.19 for Star Wars; now scores 0.39+ and flags plagiarism.
+- False positive for "cheese sculptor" plot dropped from 0.32 to 0.26 because
+  the incidental entity match ("Vermont") is against an obscure film.
 - "undefined" text in Most Similar Aspects UI when LLM returns variant key
   names (`name` instead of `aspect`, `description` instead of `explanation`).
 
