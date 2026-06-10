@@ -28,12 +28,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Releases to skip the ~5 min first-run computation.
 - **GitHub Release v0.9.0** with `nlp_cache.pkl` as a binary asset.
 
-- **Entity IDF weighting** — each entity match is now weighted by Inverse
-  Document Frequency (how rare the entity is across the 16,455-movie corpus).
-  Common entities like "Italian" (IDF=4.3, appears in 500+ plots) contribute
-  far less than rare ones like "Jedi" (IDF=7.6, appears in ~5 plots).
-  Example: biscotto plot dropped from 0.38 "Strongly Similar" to 0.30
-  "Notable Similarities" because "Italian" is too common to be a strong signal.
+- **Dual-IDF entity weighting** — each entity match is weighted by two
+  independent rarity signals, combined via geometric mean:
+  - *Entity IDF*: how many movies have this as a spaCy NER entity
+  - *Word IDF*: how common the word is in plain plot text (from TF-IDF vocab)
+  An entity must be rare in BOTH senses to get full weight. This prevents
+  common-word entities like "Italian" (combined=0.50) or "American" (0.33)
+  from inflating scores, while preserving strong signals from genuinely
+  distinctive entities like "Jedi" (0.83) or "Hogwarts" (0.89).
 
 ### Fixed
 - **NER noise entity filtering** — CARDINAL ("two", "one"), ORDINAL, DATE,

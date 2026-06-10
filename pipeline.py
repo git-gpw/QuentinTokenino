@@ -434,9 +434,10 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
 
     SCORING:
         base_score = sqrt(sbert * tfidf)                           # geometric mean
-        weighted_recall = sum(idf[matched]) / sum(idf[user_ents])  # IDF-weighted fraction
-        idf_scale = avg(normalized_idf[user_ents])                 # 0-1, penalizes common entities
-        final_score = base_score + 0.20 * weighted_recall * idf_scale * pop_scale
+        weight[e] = sqrt(entity_idf_norm * word_idf_norm)          # dual-IDF per entity
+        weighted_recall = sum(weight[matched]) / sum(weight[all])  # IDF-weighted fraction
+        rarity_scale = avg(weight[user_ents])                      # 0-1, penalizes common entities
+        final_score = base_score + 0.20 * weighted_recall * rarity_scale * pop_scale
 
     POPULARITY RANKING:
         When two movies score similarly, the more famous one ranks higher.
@@ -480,42 +481,58 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     tfidf_clamped = np.maximum(tfidf_scores, 0)
     combined_scores = np.sqrt(sbert_clamped * tfidf_clamped)
 
-    # ---- Signal 3: NER entity overlap bonus (IDF-weighted, popularity-scaled) ----
+    # ---- Signal 3: NER entity overlap bonus (dual-IDF-weighted, popularity-scaled) ----
     # Catches keyword descriptions (e.g. "Jedi", "lightsabers") that SBERT and
     # TF-IDF miss due to short user plots vs long DB plots. Only adds, never hurts.
     #
-    # Each entity match is weighted by IDF (Inverse Document Frequency):
-    #   - "Jedi" appears in ~5 movies → high IDF → strong signal
-    #   - "Italian" appears in ~500 movies → low IDF → weak signal
-    # This prevents generic terms from inflating scores.
-    #
-    # Formula: weighted_recall = sum(idf[matched]) / sum(idf[all_user_ents])
-    # Then: bonus = ENTITY_BONUS_WEIGHT * weighted_recall * pop_scale
+    # Each entity gets a combined weight from TWO IDF signals:
+    #   - Entity IDF: how many movies have this as a spaCy NER entity
+    #   - Word IDF: how common the word is in movie plot text (from TF-IDF vocab)
+    # Combined via geometric mean: sqrt(entity_idf_norm * word_idf_norm)
+    # This double-checks rarity: an entity must be rare BOTH as an extracted
+    # entity AND as a plain word to get full weight.
+    #   "Jedi":    entity_idf=0.85, word_idf=0.82 → combined=0.83 (strong)
+    #   "Italian": entity_idf=0.48, word_idf=0.52 → combined=0.50 (weak)
+    #   "American":entity_idf=0.31, word_idf=0.35 → combined=0.33 (very weak)
     user_ents = set()  # saved for shared_elements extraction after best_idx
     if _DB_ENTITIES is not None:
         user_doc = _nlp(user_plot)
         user_ents = {ent.text.lower() for ent in user_doc.ents if ent.label_ not in _NER_NOISE_LABELS}
         if user_ents:
-            # IDF weight for each user entity, normalized to [0, 1].
-            # Normalization ensures the absolute rarity of matched entities
-            # affects the score — not just the fraction that matched.
-            #   "Jedi" (idf=7.6, norm≈0.84) contributes much more than
-            #   "Italian" (idf=4.3, norm≈0.48) even in a single-entity plot.
-            idf = _ENTITY_IDF or {}
-            max_idf = max(idf.values()) if idf else 1.0
-            default_idf = np.median(list(idf.values())) if idf else 0.5 * max_idf
-            user_idf_norm = {e: idf.get(e, default_idf) / max_idf for e in user_ents}
-            total_user_weight = sum(user_idf_norm.values())
+            # Entity IDF (how rare as a named entity across the corpus)
+            ent_idf = _ENTITY_IDF or {}
+            max_ent_idf = max(ent_idf.values()) if ent_idf else 1.0
+            default_ent_idf = np.median(list(ent_idf.values())) if ent_idf else 0.5 * max_ent_idf
+
+            # Word IDF (how rare as a plain word in plot text, from TF-IDF vocab)
+            vocab = _TFIDF_VECTORIZER.vocabulary_ if _TFIDF_VECTORIZER else {}
+            word_idfs = _TFIDF_VECTORIZER.idf_ if _TFIDF_VECTORIZER else np.array([])
+            max_word_idf = float(word_idfs.max()) if len(word_idfs) > 0 else 1.0
+
+            def _combined_weight(entity_text: str) -> float:
+                """Geometric mean of normalized entity IDF and word IDF."""
+                # Entity IDF (normalized 0-1)
+                e_norm = ent_idf.get(entity_text, default_ent_idf) / max_ent_idf
+
+                # Word IDF: average over constituent words (normalized 0-1)
+                words = entity_text.split()
+                w_vals = [word_idfs[vocab[w]] / max_word_idf for w in words if w in vocab]
+                w_norm = float(np.mean(w_vals)) if w_vals else 0.5  # default for OOV
+
+                return np.sqrt(e_norm * w_norm)  # geometric mean
+
+            user_weights = {e: _combined_weight(e) for e in user_ents}
+            total_user_weight = sum(user_weights.values())
 
             if total_user_weight > 0:
                 entity_recall = np.array([
-                    sum(user_idf_norm[e] for e in (user_ents & db_ents)) / total_user_weight
+                    sum(user_weights[e] for e in (user_ents & db_ents)) / total_user_weight
                     for db_ents in _DB_ENTITIES
                 ])
-                # Scale by average IDF of user's entities (0-1) so that
-                # plots with only common entities get a smaller bonus overall.
-                avg_idf_norm = total_user_weight / len(user_ents)
-                entity_recall = entity_recall * avg_idf_norm
+                # Scale by average combined weight of user's entities (0-1)
+                # so plots with only common entities get a smaller bonus overall.
+                avg_weight = total_user_weight / len(user_ents)
+                entity_recall = entity_recall * avg_weight
             else:
                 entity_recall = np.zeros(len(_DB_ENTITIES))
 
