@@ -996,12 +996,15 @@
 
             // Render LLM aspects
             const aspEl = document.getElementById('similarity-aspects');
-            aspEl.innerHTML = (data.aspects || []).map(a =>
-                `<div class="aspect-item">
-                    <div class="name">${a.aspect}</div>
-                    <div class="desc">${a.explanation}</div>
-                </div>`
-            ).join('');
+            aspEl.innerHTML = (data.aspects || []).map(a => {
+                const name = a.aspect || a.name || a.label || '';
+                const desc = a.explanation || a.description || a.detail || '';
+                if (!name && !desc) return '';
+                return `<div class="aspect-item">
+                    <div class="name">${name}</div>
+                    <div class="desc">${desc}</div>
+                </div>`;
+            }).join('');
 
         } catch (err) {
             document.getElementById('similarity-aspects').innerHTML =
