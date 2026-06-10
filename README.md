@@ -127,6 +127,7 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
 | `evaluation.py` | Tests the pipeline with 50 movie plots (varied lengths) | Optional |
 | `data_cleaning.ipynb` | Jupyter notebook that merges CMU + MovieSum + IMDB data | No |
 | `movies_dataset.csv` | The movie database (16,455 movies, 8,155 directors, popularity scores) | No |
+| `download_cache.py` | Downloads pre-computed NLP cache from GitHub Releases | No |
 | `requirements.txt` | Python package dependencies | -- |
 | `logs/` | Timestamped logs from every run | -- |
 
@@ -145,7 +146,12 @@ python -m spacy download en_core_web_sm
 # Then pull the model:
 ollama pull gemma3
 
-# 4. The movie database (movies_dataset.csv) is included.
+# 4. (Optional) Download pre-computed NLP cache (~52 MB)
+#    Skips the ~5 min first-run computation of SBERT embeddings + TF-IDF + NER.
+#    If you skip this, the app will compute and cache features on first startup.
+python download_cache.py
+
+# 5. The movie database (movies_dataset.csv) is included.
 #    To rebuild it from raw sources, run the data_cleaning.ipynb notebook.
 ```
 

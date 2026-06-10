@@ -24,6 +24,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (e.g. "Rewriting in Ridley Scott's style...").
 - `shared_elements` field in detection output — the named entities the user's
   plot shares with the best-matched movie.
+- `download_cache.py` — downloads pre-computed NLP cache (~52 MB) from GitHub
+  Releases to skip the ~5 min first-run computation.
+- **GitHub Release v0.9.0** with `nlp_cache.pkl` as a binary asset.
 
 ### Changed
 - Verdict card uses category-based colors and labels instead of binary
