@@ -110,6 +110,8 @@ def similarity():
         if movie_row.empty:
             return jsonify({"error": f"Movie not found: {data['matched_movie']}"}), 404
         matched_plot = movie_row.iloc[0]["plot"]
+        if not isinstance(matched_plot, str) or not matched_plot.strip():
+            return jsonify({"error": f"No plot text available for: {data['matched_movie']}"}), 404
 
         result = explain_similarity(
             user_plot=data["plot"],
