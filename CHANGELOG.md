@@ -6,6 +6,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.7.0] - 2026-06-10
+
+### Summary
+Replaced TF-IDF-only plagiarism detection with dual-signal SBERT + TF-IDF
+(geometric mean), added IMDB popularity-weighted ranking, expanded evaluation
+from 15 to 50 test cases, and enriched 872 short plot summaries.
+
+### Added
+- **SBERT semantic embeddings** — `sentence-transformers` (all-MiniLM-L6-v2, ~80MB)
+  encodes all plots into 384-dim vectors for semantic similarity. Combined with
+  TF-IDF via geometric mean: `sqrt(sbert * tfidf)` requires both signals high.
+- **Popularity scoring** — IMDB `numVotes` (log-scaled, normalized 0–1) added to
+  `movies_dataset.csv`. Famous movies rank higher when scores are close.
+  Formula: `ranking_score = combined * (1 + 0.15 * popularity)`.
+- **Disk caching** — `nlp_cache.pkl` stores pre-computed SBERT embeddings and
+  TF-IDF matrix with SHA-256 hash validation. First run ~3 min, subsequent ~2s.
+  Atomic writes (temp file + rename) prevent corruption.
+- **50 evaluation test cases** in `evaluation.py` — 15 blatant plagiarism
+  (5 short / 5 medium / 5 long), 15 partial overlap, 20 original. Tests
+  length robustness.
+- Cell 5b in `data_cleaning.ipynb` — loads `title.ratings.tsv.gz`, joins to
+  merged dataset via title+director, computes popularity column.
+
+### Changed
+- **Detection method**: TF-IDF cosine → geometric mean of SBERT + TF-IDF.
+  SBERT catches paraphrases, TF-IDF distinguishes genre overlap from plagiarism.
+- **Threshold calibration**: 0.30 revalidated against 50-case dual-signal scores.
+  Blatant plagiarism: 0.20–0.70, partial overlap: 0.21–0.37, original: 0.15–0.32.
+- `schema.py` field descriptions updated from "TF-IDF" to "SBERT+TF-IDF".
+- `requirements.txt`: added `sentence-transformers>=3.0.0`.
+- `README.md`: rewritten to document dual-signal detection, popularity ranking,
+  and 50-case evaluation.
+
+### Fixed
+- `evaluation.py` never called `init_nlp()` — each of 50 test cases re-encoded
+  all 16k plots from scratch (~150 min instead of ~30s).
+- TF-IDF fallback path included user plot in fitting corpus, producing different
+  scores than the cached path (could flip plagiarism decision at threshold boundary).
+- Cache writes were not atomic — interrupted writes left corrupted `nlp_cache.pkl`
+  with no warning, causing silent slow restarts.
+- Stale "15-case" docstring in `/api/evaluate` endpoint.
+- Stale "TF-IDF text analysis" in `explain_similarity()` LLM prompt.
+
+
+## [0.6.0] - 2026-06-10
+
+### Summary
+Enriched 872 short movie plots, UI polish, and accumulated bug fixes
+from code review (PR #1).
+
+### Added
+- Enriched 872 short plot summaries (< 200 chars) to ~1200 chars via
+  Ollama LLM. Improves TF-IDF and SBERT signal quality.
+
+### Fixed
+- Alert() dialogs replaced with inline error banners in the UI.
+- Stale flow indicators after errors.
+- NaN/empty plot guard in `/api/similarity` lookup.
+- Hardcoded `/15` in evaluation log line.
+- Logger file descriptor leak in `run_pipeline`.
+- Stale accuracy comment in `schema.py`.
+- `num_predict` cap and `JSONDecodeError` handling for Ollama calls.
+- Passed `df=` and `detection=` to `run_pipeline` in evaluation loop
+  to avoid redundant CSV reads and duplicate detection.
+- Pre-fit TF-IDF vectorizer at startup (114x faster per request).
+
+### Removed
+- Dead legacy files: `agent.py`, `generate_embeddings.py`, `generate_dataset.py`.
+
+### Changed
+- `.gitignore`: exclude backup CSVs, enrich script, broader `.env` pattern.
+- Search history and rotating placeholder examples in UI dashboard.
+- Accept placeholder suggestion with right arrow or Tab key.
+
+
 ## [0.5.0] - 2026-06-09
 
 ### Summary
