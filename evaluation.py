@@ -421,7 +421,7 @@ def run_evaluation(
 
     for i, case in enumerate(EVAL_CASES):
         log.info("")
-        log.info(f"--- Case {i + 1}/15: {case['id']} [{case['tier']}] ---")
+        log.info(f"--- Case {i + 1}/{len(EVAL_CASES)}: {case['id']} [{case['tier']}] ---")
         log.info(f"  Plot:     \"{case['user_plot'][:80]}...\"")
         log.info(f"  Expected: {'PLAGIARISM' if case['expected_plagiarism'] else 'ORIGINAL'}")
 
