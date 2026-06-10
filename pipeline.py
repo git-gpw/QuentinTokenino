@@ -123,6 +123,32 @@ def setup_logger(name: str = "pipeline") -> logging.Logger:
 # STEP 1: Plagiarism Detection (deterministic, local, no API)
 # -----------------------------------------------------------------------
 
+def prefit_tfidf(df: pd.DataFrame):
+    """
+    Fit the TF-IDF vectorizer on the movie database once and cache results.
+
+    This is called once at startup. Per-request, only the user's plot
+    needs to be transformed — the DB matrix is reused.
+
+    Returns:
+        Tuple of (vectorizer, db_matrix) to be stored at module level.
+    """
+    vectorizer = TfidfVectorizer(stop_words="english")
+    db_matrix = vectorizer.fit_transform(df["plot"].tolist())
+    return vectorizer, db_matrix
+
+
+# Module-level cache — populated by app.py at startup via init_tfidf()
+_VECTORIZER = None
+_DB_MATRIX = None
+
+
+def init_tfidf(df: pd.DataFrame):
+    """Fit and cache the TF-IDF vectorizer + DB matrix. Call once at startup."""
+    global _VECTORIZER, _DB_MATRIX
+    _VECTORIZER, _DB_MATRIX = prefit_tfidf(df)
+
+
 def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     """
     Compare the user's plot against every movie in the database using TF-IDF.
@@ -134,6 +160,10 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
         - Cosine similarity then measures how much two plots share
           those distinctive words.
         - 1.0 = identical wording.  0.0 = nothing in common.
+
+    If init_tfidf() was called at startup, uses the cached vectorizer
+    and DB matrix for fast per-request transforms. Otherwise falls back
+    to fitting from scratch (for standalone / evaluation use).
 
     Args:
         user_plot: The user's free-text plot description.
@@ -147,15 +177,18 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
             detected_plagiarism - True if score >= PLAGIARISM_THRESHOLD
             top_matches         - list of top 5 matches for transparency
     """
-    db_plots = df["plot"].tolist()
+    if _VECTORIZER is not None and _DB_MATRIX is not None:
+        # Fast path: reuse pre-fitted vectorizer
+        user_vector = _VECTORIZER.transform([user_plot])
+        db_vectors = _DB_MATRIX
+    else:
+        # Fallback: fit from scratch (standalone use)
+        db_plots = df["plot"].tolist()
+        vectorizer = TfidfVectorizer(stop_words="english")
+        tfidf_matrix = vectorizer.fit_transform(db_plots + [user_plot])
+        user_vector = tfidf_matrix[-1]
+        db_vectors = tfidf_matrix[:-1]
 
-    # Build TF-IDF matrix: all database plots + user's plot at the end
-    vectorizer = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = vectorizer.fit_transform(db_plots + [user_plot])
-
-    # Compare user (last row) against all database entries
-    user_vector = tfidf_matrix[-1]
-    db_vectors = tfidf_matrix[:-1]
     scores = sklearn_cosine(user_vector, db_vectors).flatten()
 
     # Best match

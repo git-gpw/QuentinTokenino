@@ -25,9 +25,9 @@ import pandas as pd
 from pipeline import (
     run_pipeline,
     detect_plagiarism,
+    init_tfidf,
     explain_similarity,
     suggest_differentiation,
-    setup_logger,
     OLLAMA_MODEL,
 )
 from evaluation import run_evaluation, EVAL_CASES
@@ -35,9 +35,10 @@ from schema import PLAGIARISM_THRESHOLD
 
 app = Flask(__name__, static_folder="static")
 
-# Pre-load the database once at startup
+# Pre-load the database and fit TF-IDF once at startup
 CSV_PATH = "movies_dataset.csv"
 DF = pd.read_csv(CSV_PATH)
+init_tfidf(DF)
 
 
 # -----------------------------------------------------------------------
