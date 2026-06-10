@@ -6,15 +6,15 @@
 
 ## What does this do?
 
-You type a movie plot idea. The system does three things:
+You type a movie plot idea. The system does five things:
 
-1. **Plagiarism check** — Is your idea too close to an existing film? (SBERT + TF-IDF + NER entity overlap)
+1. **Similarity check** — How close is your idea to an existing film? Scored on a spectrum from "Highly Original" to "Near Identical" — not a binary yes/no. (SBERT + TF-IDF + NER entity overlap)
 2. **Similarity breakdown** — *What* makes it similar? (spaCy NER + LLM analysis)
 3. **Director match** — Which famous director made the closest existing movie? (popularity-weighted ranking)
 4. **Style rewrite** — Your plot, rewritten as that director would tell it.
-5. **Differentiation** — If flagged, suggests how to make your plot more original.
+5. **Differentiation** — Suggests how to make your plot more original.
 
-Everything comes back as clean, structured JSON — and there's a web UI.
+Results stream in progressively — you see the verdict instantly while the LLM works on the rewrite. Everything comes back as clean, structured JSON — and there's a web UI with deterministic quips like *"That's just Star Wars"* or *"Echoes of Inception, but you're building something new."*
 
 ---
 
