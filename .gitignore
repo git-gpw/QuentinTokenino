@@ -45,5 +45,8 @@ enrich_plots.py
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
+# Claude Code project guidelines (local only)
+CLAUDE.md
+
 # Secrets - NEVER commit API keys
 .env*
