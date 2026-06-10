@@ -8,7 +8,7 @@
 
 You type a movie plot idea. The system does three things:
 
-1. **Plagiarism check** — Is your idea too close to an existing film? (SBERT + TF-IDF dual-signal detection)
+1. **Plagiarism check** — Is your idea too close to an existing film? (SBERT + TF-IDF + NER entity overlap)
 2. **Similarity breakdown** — *What* makes it similar? (spaCy NER + LLM analysis)
 3. **Director match** — Which famous director made the closest existing movie? (popularity-weighted ranking)
 4. **Style rewrite** — Your plot, rewritten as that director would tell it.
@@ -37,12 +37,13 @@ YOU TYPE:  "An astronaut gets stranded on a desert planet
             
   STEP 1: PLAGIARISM DETECTION
   +--------------------------------------------+
-  |  Tool: SBERT + TF-IDF (dual-signal)        |
+  |  Tool: SBERT + TF-IDF + NER entities       |
   |  What: Compares your plot against 16,000+  |
-  |        real movies using semantic meaning   |
-  |        (SBERT) AND vocabulary overlap       |
-  |        (TF-IDF), combined via geometric    |
-  |        mean. Famous movies rank higher.    |
+  |        real movies using three signals:    |
+  |        semantic meaning (SBERT), vocabulary |
+  |        overlap (TF-IDF), and shared named  |
+  |        entities (spaCy NER). Entity matches|
+  |        with famous films count more.       |
   |        NOT a cloud API -- runs locally.    |
   |                                            |
   |  Result: "The Martian" (Ridley Scott)      |
@@ -209,27 +210,28 @@ Both contain the full trace -- every decision, every score, every match.
 
 ## Key design decisions
 
-### Why SBERT + TF-IDF (dual-signal)?
+### Why three signals (SBERT + TF-IDF + NER)?
 
-Neither signal works well alone:
+No single signal catches everything:
 
 | Signal | Catches | Misses |
 |---|---|---|
 | **SBERT** (semantic embeddings) | Paraphrases using different words | Can't tell "same story" from "same genre" |
 | **TF-IDF** (vocabulary overlap) | Exact word reuse | Misses synonym-based rewording |
+| **NER entity overlap** (spaCy) | Shared character/place names ("Jedi", "Hogwarts") | Doesn't help when plots share no proper nouns |
 
-Combined via **geometric mean** (`√(sbert × tfidf)`), both signals must be high for a match. This filters out genre-level false positives while catching true paraphrases — regardless of plot length.
+SBERT and TF-IDF are combined via **geometric mean** (`√(sbert × tfidf)`) — both must be high for a match. NER entity overlap is added as a **bonus** (`+0.20 × entity_recall × popularity_scale`) that only helps, never hurts. The bonus is weighted by IMDB popularity so that matching "Star Wars" entities counts more than matching an obscure film.
 
-| | Dual-signal (current) | Cloud embeddings (v0.1) |
+| | Three-signal (current) | Cloud embeddings (v0.1) |
 |---|---|---|
 | **API dependency** | None — runs locally | Required Google API call |
 | **Determinism** | Same input = same output, always | Model updates can change results |
 | **Speed** | ~10ms per query (pre-computed) | Network round-trip (~500ms) |
 | **Length-robust** | Yes — SBERT normalizes meaning | Partially |
 
-### Why popularity-weighted ranking?
+### Why popularity-weighted ranking (and entity bonus)?
 
-When two movies score similarly, the more **famous** one ranks higher. This is powered by IMDB vote counts (log-scaled, normalized to 0–1). Popularity affects *which* movie is shown as the match, **not** the plagiarism yes/no decision.
+When two movies score similarly, the more **famous** one ranks higher. IMDB vote counts (log-scaled, normalized to 0–1) also amplify the NER entity bonus: if your plot mentions "lightsabers" and "Jedi," the match against Star Wars (famous) gets a stronger boost than a match against an obscure film with similar terms. Popularity affects both *which* movie is shown and how strongly entity overlap contributes to the score.
 
 ### Why 0.30 as the plagiarism threshold?
 
@@ -277,7 +279,7 @@ Calibrated against our 50-case test set (see `evaluation.py`):
 - `schema.py` defines the contract -- what the output MUST look like.
 - `sentence-transformers` provides SBERT semantic embeddings (all-MiniLM-L6-v2, ~80MB, local).
 - `scikit-learn` does TF-IDF vectorization + cosine similarity.
-- `spaCy` extracts named entities -- deterministic NER for grounded similarity analysis.
+- `spaCy` extracts named entities -- used both for plagiarism scoring (entity recall bonus) and grounded similarity analysis.
 - `ollama` does the creativity -- style rewriting and thematic analysis via Gemma3 (local).
 - `movies_dataset.csv` is the ground truth -- 16,455 real movies across 8,155 directors.
 - `pipeline.py` ties it all together, caches NLP features to disk, and logs every step.
