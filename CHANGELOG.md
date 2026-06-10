@@ -6,12 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [0.7.1] - 2026-06-10
+## [0.8.0] - 2026-06-10
+
+### Added
+- **NER entity overlap** as third plagiarism detection signal. spaCy extracts
+  named entities from the user's plot and computes recall against each DB
+  movie's pre-computed entity set. Applied as additive bonus (0.20 * recall)
+  — only helps, never hurts existing scores.
+- Entity sets cached to `nlp_cache.pkl` alongside SBERT and TF-IDF features.
+  Old caches trigger a one-time backfill (~3 min).
 
 ### Fixed
+- **Keyword description blind spot**: short plots mentioning distinctive proper
+  nouns (e.g. "Jedi", "lightsabers") now correctly match their source movies.
+  Previously scored 0.19 for Star Wars; now scores 0.39+ and flags plagiarism.
 - "undefined" text in Most Similar Aspects UI when LLM returns variant key
   names (`name` instead of `aspect`, `description` instead of `explanation`).
-  Now falls back across common key variants.
 
 
 ## [0.7.0] - 2026-06-10
