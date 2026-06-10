@@ -272,18 +272,48 @@ def _precompute_entities(df: pd.DataFrame) -> list[set[str]]:
     return entity_sets
 
 
+def _compute_entity_idf(entity_sets: list[set[str]]) -> dict[str, float]:
+    """
+    Compute IDF (Inverse Document Frequency) for each entity across the corpus.
+
+    IDF measures how discriminative an entity is:
+        idf("Jedi")    = log(16455 / 5)     ≈ 8.1  (very rare → strong signal)
+        idf("Italian")  = log(16455 / 500)   ≈ 3.5  (common → weak signal)
+        idf("American") = log(16455 / 2000)  ≈ 2.1  (very common → near-noise)
+
+    Entities that appear in many movies get low weight; entities unique to
+    a few movies get high weight. This prevents generic terms like nationalities
+    from dominating the entity overlap score.
+
+    Returns:
+        dict mapping lowercased entity text to its IDF value.
+    """
+    from collections import Counter
+    import math
+
+    N = len(entity_sets)
+    doc_freq = Counter()
+    for ent_set in entity_sets:
+        for ent in ent_set:
+            doc_freq[ent] += 1
+
+    # Standard IDF with +1 smoothing to avoid division by zero
+    return {ent: math.log(N / (1 + df)) for ent, df in doc_freq.items()}
+
+
 # Module-level cache — populated by app.py at startup via init_nlp()
 _DB_EMBEDDINGS = None
 _TFIDF_VECTORIZER = None
 _TFIDF_MATRIX = None
 _DB_ENTITIES = None
+_ENTITY_IDF = None  # dict: entity text -> IDF weight
 _DB_POPULARITY = None
 
 # Disk cache location and version.
 # Bump _NLP_CACHE_VERSION when the entity extraction logic changes
 # (e.g. filtering noise labels) to force a one-time re-extraction.
 _NLP_CACHE_PATH = "nlp_cache.pkl"
-_NLP_CACHE_VERSION = 2  # v1: unfiltered entities, v2: noise labels filtered out
+_NLP_CACHE_VERSION = 3  # v1: unfiltered entities, v2: noise labels filtered, v3: entity IDF
 
 
 def _csv_hash(df: pd.DataFrame) -> str:
@@ -308,7 +338,7 @@ def _load_cache(expected_hash: str):
     return None
 
 
-def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix, entity_sets):
+def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix, entity_sets, entity_idf=None):
     """Save NLP features to disk for fast subsequent startups.
 
     Writes to a temp file first, then renames atomically to avoid
@@ -321,6 +351,7 @@ def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix, entity_se
         "tfidf_vectorizer": tfidf_vectorizer,
         "tfidf_matrix": tfidf_matrix,
         "entity_sets": entity_sets,
+        "entity_idf": entity_idf,
     }
     tmp_path = _NLP_CACHE_PATH + ".tmp"
     with open(tmp_path, "wb") as f:
@@ -339,10 +370,11 @@ def init_nlp(df: pd.DataFrame):
     Caches:
         - SBERT embeddings (384-dim per movie, semantic similarity)
         - TF-IDF vectorizer + matrix (vocabulary overlap)
-        - spaCy NER entity sets (per-movie entity text sets for Jaccard overlap)
+        - spaCy NER entity sets (per-movie entity text sets)
+        - Entity IDF weights (inverse document frequency per entity)
         - Popularity scores (for ranking boost)
     """
-    global _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES, _DB_POPULARITY
+    global _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES, _ENTITY_IDF, _DB_POPULARITY
 
     data_hash = _csv_hash(df)
     cache = _load_cache(data_hash)
@@ -353,21 +385,27 @@ def init_nlp(df: pd.DataFrame):
         _TFIDF_VECTORIZER = cache["tfidf_vectorizer"]
         _TFIDF_MATRIX = cache["tfidf_matrix"]
         _DB_ENTITIES = cache.get("entity_sets")
+        _ENTITY_IDF = cache.get("entity_idf")
         cache_version = cache.get("version", 1)
         # Re-extract entities if cache is missing them or from an older version
-        # (e.g. v1 included noise labels like CARDINAL/DATE that inflate scores)
-        if _DB_ENTITIES is None or cache_version < _NLP_CACHE_VERSION:
+        # v1→v2: filter noise labels; v2→v3: add IDF weights
+        needs_recompute = _DB_ENTITIES is None or cache_version < _NLP_CACHE_VERSION
+        if needs_recompute:
             reason = "not in cache" if _DB_ENTITIES is None else f"outdated (v{cache_version} < v{_NLP_CACHE_VERSION})"
-            print(f"  Entity sets {reason} — re-extracting from {len(df)} plots...")
-            _DB_ENTITIES = _precompute_entities(df)
-            _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES)
-            print(f"  Updated cache with filtered entity sets (v{_NLP_CACHE_VERSION})")
+            print(f"  Entity features {reason} — re-extracting from {len(df)} plots...")
+            if _DB_ENTITIES is None or cache_version < 2:
+                # Need full re-extraction (noise labels weren't filtered)
+                _DB_ENTITIES = _precompute_entities(df)
+            _ENTITY_IDF = _compute_entity_idf(_DB_ENTITIES)
+            _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES, _ENTITY_IDF)
+            print(f"  Updated cache with entity IDF (v{_NLP_CACHE_VERSION})")
     else:
         print(f"  NLP cache miss — encoding {len(df)} movies with SBERT + TF-IDF + NER...")
         _DB_EMBEDDINGS = _precompute_embeddings(df)
         _TFIDF_VECTORIZER, _TFIDF_MATRIX = _prefit_tfidf(df)
         _DB_ENTITIES = _precompute_entities(df)
-        _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES)
+        _ENTITY_IDF = _compute_entity_idf(_DB_ENTITIES)
+        _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES, _ENTITY_IDF)
         print(f"  NLP features cached to {_NLP_CACHE_PATH}")
 
     if "popularity" in df.columns:
@@ -395,9 +433,10 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
           the user's plot is short and the DB plot is long.
 
     SCORING:
-        base_score = sqrt(sbert * tfidf)                   # geometric mean
-        entity_recall = overlap / len(user_entities)       # fraction of user's entities found
-        final_score = base_score + 0.20 * entity_recall    # entity bonus (additive)
+        base_score = sqrt(sbert * tfidf)                           # geometric mean
+        weighted_recall = sum(idf[matched]) / sum(idf[user_ents])  # IDF-weighted fraction
+        idf_scale = avg(normalized_idf[user_ents])                 # 0-1, penalizes common entities
+        final_score = base_score + 0.20 * weighted_recall * idf_scale * pop_scale
 
     POPULARITY RANKING:
         When two movies score similarly, the more famous one ranks higher.
@@ -441,24 +480,45 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     tfidf_clamped = np.maximum(tfidf_scores, 0)
     combined_scores = np.sqrt(sbert_clamped * tfidf_clamped)
 
-    # ---- Signal 3: NER entity overlap bonus (popularity-weighted) ----
+    # ---- Signal 3: NER entity overlap bonus (IDF-weighted, popularity-scaled) ----
     # Catches keyword descriptions (e.g. "Jedi", "lightsabers") that SBERT and
     # TF-IDF miss due to short user plots vs long DB plots. Only adds, never hurts.
-    # Uses recall (overlap / user count) not Jaccard, because the DB plots have
-    # far more entities and Jaccard would crush the signal (1/46 ≈ 0.02).
     #
-    # Popularity amplifies the bonus: matching entities in a famous movie is
-    # more suspicious than matching an obscure one. Scale: 0.5 (obscure) to 1.0 (famous).
+    # Each entity match is weighted by IDF (Inverse Document Frequency):
+    #   - "Jedi" appears in ~5 movies → high IDF → strong signal
+    #   - "Italian" appears in ~500 movies → low IDF → weak signal
+    # This prevents generic terms from inflating scores.
+    #
+    # Formula: weighted_recall = sum(idf[matched]) / sum(idf[all_user_ents])
+    # Then: bonus = ENTITY_BONUS_WEIGHT * weighted_recall * pop_scale
     user_ents = set()  # saved for shared_elements extraction after best_idx
     if _DB_ENTITIES is not None:
         user_doc = _nlp(user_plot)
         user_ents = {ent.text.lower() for ent in user_doc.ents if ent.label_ not in _NER_NOISE_LABELS}
         if user_ents:
-            n_user = len(user_ents)
-            entity_recall = np.array([
-                len(user_ents & db_ents) / n_user
-                for db_ents in _DB_ENTITIES
-            ])
+            # IDF weight for each user entity, normalized to [0, 1].
+            # Normalization ensures the absolute rarity of matched entities
+            # affects the score — not just the fraction that matched.
+            #   "Jedi" (idf=7.6, norm≈0.84) contributes much more than
+            #   "Italian" (idf=4.3, norm≈0.48) even in a single-entity plot.
+            idf = _ENTITY_IDF or {}
+            max_idf = max(idf.values()) if idf else 1.0
+            default_idf = np.median(list(idf.values())) if idf else 0.5 * max_idf
+            user_idf_norm = {e: idf.get(e, default_idf) / max_idf for e in user_ents}
+            total_user_weight = sum(user_idf_norm.values())
+
+            if total_user_weight > 0:
+                entity_recall = np.array([
+                    sum(user_idf_norm[e] for e in (user_ents & db_ents)) / total_user_weight
+                    for db_ents in _DB_ENTITIES
+                ])
+                # Scale by average IDF of user's entities (0-1) so that
+                # plots with only common entities get a smaller bonus overall.
+                avg_idf_norm = total_user_weight / len(user_ents)
+                entity_recall = entity_recall * avg_idf_norm
+            else:
+                entity_recall = np.zeros(len(_DB_ENTITIES))
+
             # Scale by popularity: famous movies get full bonus, obscure get half
             if _DB_POPULARITY is not None:
                 pop_scale = 0.5 + 0.5 * _DB_POPULARITY

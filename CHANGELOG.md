@@ -28,6 +28,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Releases to skip the ~5 min first-run computation.
 - **GitHub Release v0.9.0** with `nlp_cache.pkl` as a binary asset.
 
+- **Entity IDF weighting** — each entity match is now weighted by Inverse
+  Document Frequency (how rare the entity is across the 16,455-movie corpus).
+  Common entities like "Italian" (IDF=4.3, appears in 500+ plots) contribute
+  far less than rare ones like "Jedi" (IDF=7.6, appears in ~5 plots).
+  Example: biscotto plot dropped from 0.38 "Strongly Similar" to 0.30
+  "Notable Similarities" because "Italian" is too common to be a strong signal.
+
 ### Fixed
 - **NER noise entity filtering** — CARDINAL ("two", "one"), ORDINAL, DATE,
   TIME, QUANTITY, MONEY, PERCENT entity types are now excluded from plagiarism
