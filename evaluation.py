@@ -457,7 +457,10 @@ def run_evaluation(
             # ---- STEPS 2-4: LLM rewrite + validation (optional) ----
             if run_llm:
                 result["llm_attempted"] = True
-                pipeline_result = run_pipeline(case["user_plot"], csv_path, log=log)
+                pipeline_result = run_pipeline(
+                    case["user_plot"], csv_path, log=log,
+                    df=df, detection=detection,
+                )
                 result["schema_valid"] = True
 
                 # ---- METRIC 3: LLM-as-a-Judge ----
