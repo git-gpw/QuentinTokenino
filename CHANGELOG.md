@@ -28,6 +28,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Releases to skip the ~5 min first-run computation.
 - **GitHub Release v0.9.0** with `nlp_cache.pkl` as a binary asset.
 
+### Fixed
+- **NER noise entity filtering** — CARDINAL ("two", "one"), ORDINAL, DATE,
+  TIME, QUANTITY, MONEY, PERCENT entity types are now excluded from plagiarism
+  scoring. These matched everywhere and inflated scores. Example: "Two
+  astronauts on a mission to Mars" previously matched Apollo 13 at 37% due to
+  "two", "one", "earth" — now correctly matches Red Planet at 46% via "mars",
+  "earth".
+- Cache versioning (`_NLP_CACHE_VERSION = 2`) forces automatic re-extraction
+  of entity sets when upgrading from v1 cache, while preserving SBERT/TF-IDF.
+
 ### Changed
 - Verdict card uses category-based colors and labels instead of binary
   "Plagiarism Detected" / "Original Plot".

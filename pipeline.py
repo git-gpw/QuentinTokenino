@@ -150,6 +150,13 @@ def cleanup_logger(logger: logging.Logger):
 ENTITY_BONUS_WEIGHT = 0.20  # max bonus from entity overlap
 POPULARITY_BOOST = 0.15  # max boost for ranking (not for threshold decision)
 
+# Entity types to EXCLUDE from plagiarism scoring.
+# Numbers ("two", "one"), dates, times, etc. match everywhere and add noise.
+# We only keep proper nouns: people, organizations, places, works of art, etc.
+_NER_NOISE_LABELS = frozenset({
+    "CARDINAL", "ORDINAL", "DATE", "TIME", "QUANTITY", "MONEY", "PERCENT",
+})
+
 
 # ---- Deterministic quips per category ----
 # Each template can use {movie} and optionally {elements}.
@@ -252,11 +259,15 @@ def _precompute_entities(df: pd.DataFrame) -> list[set[str]]:
     Called once at startup, cached to disk. Each movie gets a set of
     unique entity texts (lowercased) for fast Jaccard overlap at query time.
     ~2-3 minutes for 16k plots via nlp.pipe().
+
+    Filters out noise entity types (CARDINAL, ORDINAL, DATE, TIME, etc.)
+    that match everywhere and inflate scores — "two" and "one" are not
+    meaningful plagiarism signals.
     """
     plots = df["plot"].tolist()
     entity_sets = []
     for doc in _nlp.pipe(plots, batch_size=256, disable=["tagger", "parser", "lemmatizer"]):
-        ents = {ent.text.lower() for ent in doc.ents}
+        ents = {ent.text.lower() for ent in doc.ents if ent.label_ not in _NER_NOISE_LABELS}
         entity_sets.append(ents)
     return entity_sets
 
@@ -268,8 +279,11 @@ _TFIDF_MATRIX = None
 _DB_ENTITIES = None
 _DB_POPULARITY = None
 
-# Disk cache location
+# Disk cache location and version.
+# Bump _NLP_CACHE_VERSION when the entity extraction logic changes
+# (e.g. filtering noise labels) to force a one-time re-extraction.
 _NLP_CACHE_PATH = "nlp_cache.pkl"
+_NLP_CACHE_VERSION = 2  # v1: unfiltered entities, v2: noise labels filtered out
 
 
 def _csv_hash(df: pd.DataFrame) -> str:
@@ -302,6 +316,7 @@ def _save_cache(data_hash, embeddings, tfidf_vectorizer, tfidf_matrix, entity_se
     """
     cache = {
         "hash": data_hash,
+        "version": _NLP_CACHE_VERSION,
         "embeddings": embeddings,
         "tfidf_vectorizer": tfidf_vectorizer,
         "tfidf_matrix": tfidf_matrix,
@@ -338,12 +353,15 @@ def init_nlp(df: pd.DataFrame):
         _TFIDF_VECTORIZER = cache["tfidf_vectorizer"]
         _TFIDF_MATRIX = cache["tfidf_matrix"]
         _DB_ENTITIES = cache.get("entity_sets")
-        # Backfill: if cache was built before entity support, compute now
-        if _DB_ENTITIES is None:
-            print(f"  Entity sets not in cache — extracting from {len(df)} plots...")
+        cache_version = cache.get("version", 1)
+        # Re-extract entities if cache is missing them or from an older version
+        # (e.g. v1 included noise labels like CARDINAL/DATE that inflate scores)
+        if _DB_ENTITIES is None or cache_version < _NLP_CACHE_VERSION:
+            reason = "not in cache" if _DB_ENTITIES is None else f"outdated (v{cache_version} < v{_NLP_CACHE_VERSION})"
+            print(f"  Entity sets {reason} — re-extracting from {len(df)} plots...")
             _DB_ENTITIES = _precompute_entities(df)
             _save_cache(data_hash, _DB_EMBEDDINGS, _TFIDF_VECTORIZER, _TFIDF_MATRIX, _DB_ENTITIES)
-            print(f"  Updated cache with entity sets")
+            print(f"  Updated cache with filtered entity sets (v{_NLP_CACHE_VERSION})")
     else:
         print(f"  NLP cache miss — encoding {len(df)} movies with SBERT + TF-IDF + NER...")
         _DB_EMBEDDINGS = _precompute_embeddings(df)
@@ -434,7 +452,7 @@ def detect_plagiarism(user_plot: str, df: pd.DataFrame) -> dict:
     user_ents = set()  # saved for shared_elements extraction after best_idx
     if _DB_ENTITIES is not None:
         user_doc = _nlp(user_plot)
-        user_ents = {ent.text.lower() for ent in user_doc.ents}
+        user_ents = {ent.text.lower() for ent in user_doc.ents if ent.label_ not in _NER_NOISE_LABELS}
         if user_ents:
             n_user = len(user_ents)
             entity_recall = np.array([
